@@ -81,7 +81,8 @@ in
         existing.succeed(
             # /var/empty is immutable, which forbids a new label too.
             "chattr -i /var/empty",
-            "chcon -R -h -t unlabeled_t /etc /var /root /home",
+            "mkdir -p /srv/data /tmp/.leftover-unix",
+            "chcon -R -h -t unlabeled_t /etc /var /root /home /srv /tmp/.leftover-unix",
             "chattr +i /var/empty",
             "rm -f /var/lib/selinux-nixos/relabelled",
             "sync",
@@ -96,7 +97,7 @@ in
         early = existing.succeed("journalctl -b -u initrd-selinux-setup.service --no-pager")
         assert "relabelling /" in early, early
         stray = existing.succeed(
-            "getfattr -R -h --absolute-names -n security.selinux /etc /var /root /home 2>/dev/null"
+            "getfattr -R -h --absolute-names -n security.selinux /etc /var /root /home /srv /tmp/.leftover-unix 2>/dev/null"
             " | grep -B1 ':unlabeled_t:' || true"
         ).strip()
         assert stray == "", stray

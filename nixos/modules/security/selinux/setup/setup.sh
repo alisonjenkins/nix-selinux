@@ -193,6 +193,25 @@ if [ -n "$relabel_mutable" ]; then
         record=
       fi
       if [ -n "$locked" ]; then chattr +i /var/empty; fi
+      # The rules leave the content of temporary directories alone.
+      # Leftovers from before SELinux have no label at all there; give
+      # them their directory's.
+      for dir in /tmp /var/tmp; do
+        if [ ! -d "$dir" ] || [ -L "$dir" ]; then continue; fi
+        context=$(getfattr -h --only-values -n security.selinux "$dir" 2>/dev/null | tr -d '\0' || true)
+        if [ -z "$context" ]; then continue; fi
+        find "$dir" -xdev -mindepth 1 ! -type l -print0 \
+          | xargs -0 -r getfattr -h --absolute-names -n security.selinux 2>&1 \
+          | awk '
+              /^# file: / { file = substr($0, 9) }
+              /^security.selinux=.*:unlabeled_t:/ { print file }
+              /: security.selinux: No such attribute$/ {
+                sub(/: security.selinux: No such attribute$/, "")
+                print
+              }
+            ' \
+          | xargs -d '\n' -r setfilecon "$context" || true
+      done
     fi
     if [ -n "$record" ]; then
       mkdir -p "$stateDir"
