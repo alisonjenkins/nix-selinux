@@ -11,7 +11,13 @@ stdenv.mkDerivation (finalAttrs: {
 
   src = fetchurl {
     url = "https://github.com/SELinuxProject/selinux/releases/download/${finalAttrs.version}/secilc-${finalAttrs.version}.tar.gz";
-    hash = "sha256-H7feAF01rgrG/4+PyVXQihW1waZ+lhuX75h1dq8NsRo=";
+    # The version follows libsepol, which differs between NixOS releases.
+    hash =
+      {
+        "3.10" = "sha256-ZlgHHW8QRBhNOXMGKnmBh1N64cPdtMMa/UF98zMxbBA=";
+        "3.11" = "sha256-H7feAF01rgrG/4+PyVXQihW1waZ+lhuX75h1dq8NsRo=";
+      }
+      .${finalAttrs.version} or (throw "secilc: no source hash for version ${finalAttrs.version}");
   };
 
   buildInputs = [ libsepol ];

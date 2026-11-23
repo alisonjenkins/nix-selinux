@@ -123,8 +123,10 @@ fi
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# Every top-level store path, except the hard-link farm of the optimiser.
-find "$store" -mindepth 1 -maxdepth 1 ! -name .links -print | sort > "$work/all"
+# Every top-level store path. Names starting with a dot are not store
+# paths: the hard-link farm of the optimiser and its short-lived temporary
+# links, which can vanish while this runs.
+find "$store" -mindepth 1 -maxdepth 1 ! -name '.*' -print | sort > "$work/all"
 
 # Store paths that hold a file with an exact rule. Their labels depend on
 # those rules as well as on the generic ones.
