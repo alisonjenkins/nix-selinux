@@ -117,7 +117,7 @@ in
         }
         trap cleanup EXIT
 
-        chroot /sysroot "$closure/selinux-setup"
+        chroot /sysroot "$closure/selinux-setup" --relabel-mutable-early
       '';
     };
 

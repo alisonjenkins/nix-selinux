@@ -25,6 +25,7 @@ exact_rev=
 exact_file=
 remounted=
 relabel_mutable=
+record=1
 store_only=
 force=
 exact=()
@@ -43,6 +44,7 @@ while [ $# -gt 0 ]; do
     --relabel) relabel+=("$2"); shift 2 ;;
     --remounted) remounted=1; shift ;;
     --relabel-mutable) relabel_mutable=1; shift ;;
+    --relabel-mutable-early) relabel_mutable=1; record=; shift ;;
     --persistent-root) persistent+=("$2"); shift 2 ;;
     --force) force=1; shift ;;
     --store-only) store_only=1; shift ;;
@@ -124,8 +126,13 @@ for link in /run/current-system /run/booted-system; do
 done
 
 # A full pass over the mutable paths, when asked to and only if the
-# labelling rules changed since the last one. This runs after activation,
-# so it also corrects what inheritance alone got wrong.
+# labelling rules changed since the last one.
+#
+# It runs twice in a boot. Early, in the initrd: on a system that has
+# files but no labels yet (SELinux was just enabled, or it was booted
+# without), nothing may start before they are labelled. And again after
+# activation, to correct what inheritance alone got wrong in the files
+# activation made. Only the second one records that the pass is done.
 if [ -n "$relabel_mutable" ]; then
   persistent_devs=" "
   for root in "${persistent[@]}"; do
@@ -154,9 +161,11 @@ if [ -n "$relabel_mutable" ]; then
       log "relabelling ${existing[*]}"
       setfiles -F "$spec" "${existing[@]}"
     fi
-    mkdir -p "$stateDir"
-    echo "$mutable_rev" > "$stateDir/relabelled.tmp"
-    mv "$stateDir/relabelled.tmp" "$stateDir/relabelled"
+    if [ -n "$record" ]; then
+      mkdir -p "$stateDir"
+      echo "$mutable_rev" > "$stateDir/relabelled.tmp"
+      mv "$stateDir/relabelled.tmp" "$stateDir/relabelled"
+    fi
   fi
 
   # Persistent storage keeps its own record, because the one above is
@@ -167,8 +176,10 @@ if [ -n "$relabel_mutable" ]; then
       log "relabelling $root as /"
       mkdir -p "$root$stateDir"
       setfiles -F -r "$root" "$spec" "$root"
-      echo "$mutable_rev" > "$root$stateDir/relabelled.tmp"
-      mv "$root$stateDir/relabelled.tmp" "$root$stateDir/relabelled"
+      if [ -n "$record" ]; then
+        echo "$mutable_rev" > "$root$stateDir/relabelled.tmp"
+        mv "$root$stateDir/relabelled.tmp" "$root$stateDir/relabelled"
+      fi
     fi
   done
 fi

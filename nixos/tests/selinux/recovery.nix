@@ -29,6 +29,10 @@ in
         boot.kernelParams = lib.mkAfter [ "enforcing=0" ];
       };
 
+    # An installation whose files have no labels: SELinux was just
+    # enabled on it, or it ran without for a while.
+    existing = enforcingSystem;
+
     disabled =
       { lib, pkgs, ... }:
       {
@@ -71,6 +75,32 @@ in
             "systemctl restart selinux-relabel-after-disabled.service",
         )
         disabled.fail("test -e /var/lib/selinux-nixos/relabelled")
+
+    with subtest("a system whose files have no labels boots enforcing"):
+        existing.wait_for_unit("multi-user.target")
+        existing.succeed(
+            # /var/empty is immutable and stays as it is.
+            "chcon -R -h -t unlabeled_t /etc /var /root /home || true",
+            "stat -c %C /etc /var/lib /var/log/journal | grep -c unlabeled_t | grep -qx 3",
+            "rm -f /var/lib/selinux-nixos/relabelled",
+            "sync",
+        )
+        existing.crash()
+        existing.start()
+        existing.wait_for_unit("multi-user.target")
+        assert existing.succeed("getenforce").strip() == "Enforcing"
+        failed = existing.succeed("systemctl --failed --no-legend").strip()
+        assert failed == "", failed
+        # Before anything else ran, in the initrd.
+        early = existing.succeed("journalctl -b -u initrd-selinux-setup.service --no-pager")
+        assert "relabelling /etc" in early, early
+        stray = existing.succeed(
+            "getfattr -R -h --absolute-names -n security.selinux /etc /var /root /home 2>/dev/null"
+            " | grep -B1 ':unlabeled_t:' || true"
+        ).strip()
+        assert stray == "", stray
+        denials = existing.succeed("journalctl -b --no-pager | grep 'avc:  denied' || true").strip()
+        assert denials == "", denials
 
     with subtest("installing a generation labels the store ahead of its first boot"):
         # This system has never run with SELinux, as on the day it is first
