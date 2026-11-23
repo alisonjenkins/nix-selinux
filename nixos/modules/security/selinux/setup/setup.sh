@@ -25,8 +25,10 @@ exact_rev=
 exact_file=
 remounted=
 relabel_mutable=
+force=
 exact=()
 relabel=()
+persistent=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,6 +42,8 @@ while [ $# -gt 0 ]; do
     --relabel) relabel+=("$2"); shift 2 ;;
     --remounted) remounted=1; shift ;;
     --relabel-mutable) relabel_mutable=1; shift ;;
+    --persistent-root) persistent+=("$2"); shift 2 ;;
+    --force) force=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -68,9 +72,10 @@ if [ "$current" = kernel ]; then
 fi
 
 label_one() {
-  # Label a single path without descending into it.
+  # Label a single path without descending into it, by the rules for the
+  # second argument if there is one.
   local path=$1 context
-  context=$(selabel_lookup -b file -f "$spec" -k "$path" 2>/dev/null \
+  context=$(selabel_lookup -b file -f "$spec" -k "${2:-$path}" 2>/dev/null \
     | sed -n 's/^Default context: //p')
   if [ -n "$context" ]; then
     setfilecon "$context" "$path" 2>/dev/null || true
@@ -95,6 +100,16 @@ for dir in / /etc /var /var/lib /var/log /nix /nix/var "$store" /home /root /tmp
   if [ -d "$dir" ]; then label_one "$dir"; fi
 done
 
+# Persistent storage of an ephemeral root (impermanence): /persist/var/log
+# is the same directory as /var/log and gets the same label. Its top
+# levels are labelled every time for the same reason as above.
+for root in "${persistent[@]}"; do
+  if [ -d "$root" ]; then label_one "$root" /; fi
+  for dir in /etc /var /var/lib /var/log /home /root; do
+    if [ -d "$root$dir" ]; then label_one "$root$dir" "$dir"; fi
+  done
+done
+
 # Symlinks that activation creates under /run and every domain follows.
 for link in /run/current-system /run/booted-system; do
   if [ -L "$link" ]; then setfiles -F "$spec" "$link" 2>/dev/null || true; fi
@@ -103,19 +118,51 @@ done
 # A full pass over the mutable paths, when asked to and only if the
 # labelling rules changed since the last one. This runs after activation,
 # so it also corrects what inheritance alone got wrong.
-if [ -n "$relabel_mutable" ] \
-  && [ "$(cat "$stateDir/relabelled" 2>/dev/null || true)" != "$mutable_rev" ]; then
-  existing=()
-  for path in "${relabel[@]}"; do
-    if [ -e "$path" ]; then existing+=("$path"); fi
+if [ -n "$relabel_mutable" ]; then
+  persistent_devs=" "
+  for root in "${persistent[@]}"; do
+    if [ -d "$root" ]; then persistent_devs+="$(stat -c %d "$root") "; fi
   done
-  if [ ${#existing[@]} -gt 0 ]; then
-    log "relabelling ${existing[*]}"
-    setfiles -F "$spec" "${existing[@]}"
+
+  if [ -n "$force" ] || [ "$(cat "$stateDir/relabelled" 2>/dev/null || true)" != "$mutable_rev" ]; then
+    existing=()
+    for path in "${relabel[@]}"; do
+      if [ -e "$path" ]; then existing+=("$path"); fi
+    done
+    # setfiles stays on the filesystem of each path it is given, so add
+    # the filesystems mounted below them: a separate /home, a bind-mounted
+    # file. Not memory or container filesystems, and not persistent
+    # storage, which has its own pass below.
+    while read -r target fstype; do
+      case "$fstype" in tmpfs | ramfs | overlay) continue ;; esac
+      for path in "${existing[@]}"; do
+        if [[ $target == "$path"/* && $persistent_devs != *" $(stat -c %d "$target") "* ]]; then
+          existing+=("$target")
+          break
+        fi
+      done
+    done < <(findmnt -rno TARGET,FSTYPE,OPTIONS | awk '$3 ~ /(^|,)seclabel(,|$)/ { print $1, $2 }')
+    if [ ${#existing[@]} -gt 0 ]; then
+      log "relabelling ${existing[*]}"
+      setfiles -F "$spec" "${existing[@]}"
+    fi
+    mkdir -p "$stateDir"
+    echo "$mutable_rev" > "$stateDir/relabelled.tmp"
+    mv "$stateDir/relabelled.tmp" "$stateDir/relabelled"
   fi
-  mkdir -p "$stateDir"
-  echo "$mutable_rev" > "$stateDir/relabelled.tmp"
-  mv "$stateDir/relabelled.tmp" "$stateDir/relabelled"
+
+  # Persistent storage keeps its own record, because the one above is
+  # gone on every boot of an ephemeral root.
+  for root in "${persistent[@]}"; do
+    [ -d "$root" ] || continue
+    if [ -n "$force" ] || [ "$(cat "$root$stateDir/relabelled" 2>/dev/null || true)" != "$mutable_rev" ]; then
+      log "relabelling $root as /"
+      mkdir -p "$root$stateDir"
+      setfiles -F -r "$root" "$spec" "$root"
+      echo "$mutable_rev" > "$root$stateDir/relabelled.tmp"
+      mv "$root$stateDir/relabelled.tmp" "$root$stateDir/relabelled"
+    fi
+  done
 fi
 
 # --- Nix store ----------------------------------------------------------------

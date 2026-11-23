@@ -33,6 +33,9 @@ let
       --exact-rev ${exactRevision} \
       --exact-file ${cfg.policy}/nixos/exact-paths \
       ${lib.concatMapStringsSep " " (p: "--relabel ${lib.escapeShellArg p}") cfg.relabelPaths} \
+      ${
+        lib.concatMapStringsSep " " (p: "--persistent-root ${lib.escapeShellArg p}") cfg.persistentRoots
+      } \
       "$@"
   '';
 
@@ -145,6 +148,7 @@ in
             # These create and adjust files under the paths being relabelled.
             "systemd-tmpfiles-setup.service"
             "systemd-journal-flush.service"
+            "systemd-machine-id-commit.service"
           ];
           conflicts = [ "shutdown.target" ];
           serviceConfig = {
@@ -186,7 +190,11 @@ in
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
-            ExecStart = "${lib.getExe' pkgs.coreutils "rm"} -f /var/lib/selinux-nixos/relabelled";
+            ExecStart = "${lib.getExe' pkgs.coreutils "rm"} -f ${
+              lib.concatMapStringsSep " " (root: "${root}/var/lib/selinux-nixos/relabelled") (
+                [ "" ] ++ cfg.persistentRoots
+              )
+            }";
           };
         };
 

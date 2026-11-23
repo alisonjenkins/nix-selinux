@@ -171,7 +171,7 @@ cmd_relabel() {
   need_root relabel
   # Forget that the mutable paths were done, so they are done again.
   rm -f /var/lib/selinux-nixos/relabelled
-  exec "@setup@" --relabel-mutable
+  exec "@setup@" --relabel-mutable --force
 }
 
 case "${1:-help}" in

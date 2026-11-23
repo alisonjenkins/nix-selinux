@@ -130,6 +130,10 @@ Each line is one kind of denial: which domain, on what, how often.
 
 Safe in every form: `nix-store --optimise`, `nix.optimise.automatic` and `nix.settings.auto-optimise-store`. Optimisation links identical files together and can drop a label; the module notices and puts it back by itself.
 
+### Ephemeral root and impermanence {#module-security-selinux-impermanence}
+
+Works without settings. A root that is empty on every boot is labelled from nothing each time. With the [impermanence](https://github.com/nix-community/impermanence) module, persisted files are labelled as their everyday path: `/persist/var/log` like `/var/log`. If you bind-mount persistent storage yourself, name its top directory in `security.selinux.persistentRoots`.
+
 ## Limits {#module-security-selinux-limits}
 
 - Not compatible with `security.apparmor.enable` or `system.nixos-init.enable`.
