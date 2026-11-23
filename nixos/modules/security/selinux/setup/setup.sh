@@ -225,10 +225,12 @@ if [ -n "$relabel_mutable" ]; then
         for root in "${persistent[@]}"; do prune+=(-o -path "$root"); done
         find "${changed[@]}" -xdev \( "${prune[@]}" \) -prune -o -newercm "$stamp" -print0 \
           > "$stamp.changed"
-        # setfiles descends into directories, so they are done one by one.
+        # setfiles descends into directories, so those are looked up and
+        # set here, all in one go.
+        : > "$stamp.dirs"
         while IFS= read -r -d "" path; do
           if [ -d "$path" ] && [ ! -L "$path" ]; then
-            label_one "$path"
+            printf '%s\n' "$path" >> "$stamp.dirs"
           else
             printf '%s\0' "$path"
           fi
@@ -236,7 +238,13 @@ if [ -n "$relabel_mutable" ]; then
         if [ -s "$stamp.files" ]; then
           setfiles -0 -F -f "$stamp.files" "$spec" || failed=1
         fi
-        rm -f "$stamp.changed" "$stamp.files"
+        xargs -a "$stamp.dirs" -d '\n' -r matchpathcon -f "$spec" \
+          | awk -F'\t' '$2 != "<<none>>" { print $2 "\t" $1 }' > "$stamp.contexts" || true
+        cut -f1 "$stamp.contexts" | sort -u | while IFS= read -r context; do
+          awk -F'\t' -v context="$context" '$1 == context { print $2 }' "$stamp.contexts" \
+            | xargs -d '\n' -r setfilecon "$context" || true
+        done
+        rm -f "$stamp.changed" "$stamp.files" "$stamp.dirs" "$stamp.contexts"
       fi
       if [ -n "$failed" ]; then
         log "some files could not be relabelled"
