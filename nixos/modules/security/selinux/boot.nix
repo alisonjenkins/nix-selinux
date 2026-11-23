@@ -162,7 +162,14 @@ in
           unitConfig.ConditionSecurity = "selinux";
           serviceConfig = {
             Type = "oneshot";
-            ExecStart = setup;
+            # Twice: the second run catches a file replaced during the first.
+            ExecStart = [
+              "${setup}"
+              "${setup}"
+            ];
+            # A store path can be deleted while it is being labelled.
+            Restart = "on-failure";
+            RestartSec = 2;
           };
         };
 
