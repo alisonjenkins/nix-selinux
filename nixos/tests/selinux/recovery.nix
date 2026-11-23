@@ -96,6 +96,9 @@ in
         # Before anything else ran, in the initrd.
         early = existing.succeed("journalctl -b -u initrd-selinux-setup.service --no-pager")
         assert "relabelling /" in early, early
+        # The pass after activation then only looks at what changed.
+        late = existing.succeed("journalctl -b -u selinux-relabel.service --no-pager")
+        assert "relabelling what changed in /" in late, late
         stray = existing.succeed(
             "getfattr -R -h --absolute-names -n security.selinux /etc /var /root /home /srv /tmp/.leftover-unix 2>/dev/null"
             " | grep -B1 ':unlabeled_t:' || true"
@@ -121,5 +124,6 @@ in
         # What the next boot will find: nothing left to do.
         out = disabled.succeed("/run/current-system/selinux-setup --preinstall")
         assert "store labels are up to date" in out, out
+        assert "relabelling what changed in /" in out, out
   '';
 }

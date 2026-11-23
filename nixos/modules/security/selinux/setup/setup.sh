@@ -14,6 +14,7 @@ set -euo pipefail
 store=/nix/store
 marker=trusted.nixos-selinux
 stateDir=/var/lib/selinux-nixos
+stamp=$stateDir/labelled-at
 
 saved_args=("$@")
 
@@ -99,8 +100,8 @@ label_one() {
   # second argument if there is one.
   local path=$1 context
   context=$(selabel_lookup -b file -f "$spec" -k "${2:-$path}" 2>/dev/null \
-    | sed -n 's/^Default context: //p')
-  if [ -n "$context" ]; then
+    | sed -n 's/^Default context: //p' || true)
+  if [ -n "$context" ] && [ "$context" != "<<none>>" ]; then
     setfilecon "$context" "$path" 2>/dev/null || true
   fi
 }
@@ -180,7 +181,32 @@ if [ -n "$relabel_mutable" ]; then
       if [ -d "$root" ]; then exclude+=(-e "$root"); fi
     done
     if [ ${#existing[@]} -gt 0 ]; then
-      log "relabelling ${existing[*]}"
+      # A full pass reads every file, about half a minute per million.
+      # It leaves a note of when it started and what it covered, so that
+      # the next pass, later in the same boot or on the first boot after
+      # an install, only looks at files changed since. The note is not
+      # trusted if the clock is behind it.
+      covered=()
+      if [ -z "$force" ] \
+        && [ "$(head -n 1 "$stamp" 2>/dev/null || true)" = "$mutable_rev" ] \
+        && [ "$(date +%s)" -ge "$(stat -c %Y "$stamp")" ]; then
+        mapfile -t covered < <(tail -n +2 "$stamp")
+      fi
+      full=()
+      changed=()
+      for path in "${existing[@]}"; do
+        if printf '%s\n' "${covered[@]}" | grep -qxF -- "$path"; then
+          changed+=("$path")
+        else
+          full+=("$path")
+        fi
+      done
+      mkdir -p "$stateDir"
+      {
+        echo "$mutable_rev"
+        printf '%s\n' "${existing[@]}"
+      } > "$stamp.new"
+
       # NixOS makes /var/empty immutable, which forbids a new label too.
       locked=
       if lsattr -d /var/empty 2>/dev/null | cut -d' ' -f1 | grep -q i; then
@@ -188,9 +214,42 @@ if [ -n "$relabel_mutable" ]; then
       fi
       # A file that cannot be relabelled must not stop the boot. The
       # pass is not recorded as done then, and is tried again.
-      if ! setfiles -F "${exclude[@]}" "$spec" "${existing[@]}"; then
+      failed=
+      if [ ${#full[@]} -gt 0 ]; then
+        log "relabelling ${full[*]}"
+        setfiles -F "${exclude[@]}" "$spec" "${full[@]}" || failed=1
+      fi
+      if [ ${#changed[@]} -gt 0 ]; then
+        log "relabelling what changed in ${changed[*]}"
+        prune=(-path "$store")
+        for root in "${persistent[@]}"; do prune+=(-o -path "$root"); done
+        find "${changed[@]}" -xdev \( "${prune[@]}" \) -prune -o -newercm "$stamp" -print0 \
+          > "$stamp.changed"
+        # setfiles descends into directories, so they are done one by one.
+        while IFS= read -r -d "" path; do
+          if [ -d "$path" ] && [ ! -L "$path" ]; then
+            label_one "$path"
+          else
+            printf '%s\0' "$path"
+          fi
+        done < "$stamp.changed" > "$stamp.files"
+        if [ -s "$stamp.files" ]; then
+          setfiles -0 -F -f "$stamp.files" "$spec" || failed=1
+        fi
+        rm -f "$stamp.changed" "$stamp.files"
+      fi
+      if [ -n "$failed" ]; then
         log "some files could not be relabelled"
         record=
+        rm -f "$stamp.new"
+      else
+        # A note that covers more than this pass saw (filesystems that
+        # are not mounted yet in the initrd) stays as it is.
+        keep=
+        for path in "${covered[@]}"; do
+          if ! printf '%s\n' "${existing[@]}" | grep -qxF -- "$path"; then keep=1; fi
+        done
+        if [ -n "$keep" ]; then rm -f "$stamp.new"; else mv "$stamp.new" "$stamp"; fi
       fi
       if [ -n "$locked" ]; then chattr +i /var/empty; fi
       # The rules leave the content of temporary directories alone.
@@ -217,6 +276,7 @@ if [ -n "$relabel_mutable" ]; then
       mkdir -p "$stateDir"
       echo "$mutable_rev" > "$stateDir/relabelled.tmp"
       mv "$stateDir/relabelled.tmp" "$stateDir/relabelled"
+      rm -f "$stamp"
     fi
   fi
 
