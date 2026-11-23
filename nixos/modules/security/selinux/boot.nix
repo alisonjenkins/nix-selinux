@@ -232,13 +232,25 @@ in
         '';
       };
 
-      # Refuse to switch to a generation whose policy the running kernel
-      # cannot load, before anything of the new generation is activated.
+      # Before a generation is installed:
+      #
+      # - Label its store paths now where activation will not: with `boot`,
+      #   and while the running kernel has no SELinux (the generation that
+      #   first enables it). The next boot then only verifies. Should this
+      #   fail, that boot labels as before.
+      # - Refuse to switch to a generation whose policy the running kernel
+      #   cannot load, before anything of it is activated.
       preSwitchChecks.selinux = ''
-        case "''${2:-}" in
-          switch | test) ;;
+        action="''${2:-}"
+        case "$action" in
+          switch | test | boot) ;;
           *) exit 0 ;;
         esac
+        if [ "$action" = boot ] || [ ! -e /sys/fs/selinux/load ]; then
+          ${setup} --store-only \
+            || echo "security.selinux: could not label the new store paths now; the next boot will" >&2
+        fi
+        [ "$action" != boot ] || exit 0
         [ -r /sys/fs/selinux/policyvers ] || exit 0
         policy=${policyFile}
         od=${lib.getExe' pkgs.coreutils "od"}

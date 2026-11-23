@@ -1,6 +1,9 @@
 # The two ways out of an enforcing system that does not work, as they
 # would be typed into a boot loader entry: boot permissive once with
 # `enforcing=0`, or boot without SELinux by leaving it out of `lsm=`.
+#
+# The system without SELinux also stands in for one where it is about to
+# be enabled.
 let
   enforcingSystem = {
     imports = [
@@ -27,11 +30,16 @@ in
       };
 
     disabled =
-      { lib, ... }:
+      { lib, pkgs, ... }:
       {
         imports = [ enforcingSystem ];
         # The kernel uses the last `lsm=` it is given.
         boot.kernelParams = lib.mkAfter [ "lsm=landlock,yama,bpf" ];
+        # Test VMs come without switch-to-configuration, and have no boot
+        # loader to install to.
+        system.switch.enable = true;
+        boot.loader.grub.enable = false;
+        system.build.installBootLoader = lib.mkForce (pkgs.writeShellScript "no-boot-loader" "true");
       };
   };
 
@@ -63,5 +71,19 @@ in
             "systemctl restart selinux-relabel-after-disabled.service",
         )
         disabled.fail("test -e /var/lib/selinux-nixos/relabelled")
+
+    with subtest("installing a generation labels the store ahead of its first boot"):
+        # This system has never run with SELinux, as on the day it is first
+        # enabled: nothing in the store is labelled.
+        systemd = disabled.succeed("readlink -f /run/current-system/systemd/lib/systemd/systemd").strip()
+        label = f"getfattr --only-values -n security.selinux {systemd}"
+        disabled.fail(label)
+        out = disabled.succeed("/run/current-system/bin/switch-to-configuration boot 2>&1")
+        print(out)
+        assert "labelling" in out, out
+        assert "init_exec_t" in disabled.succeed(label)
+        # What the next boot will find: nothing left to do.
+        out = disabled.succeed("/run/current-system/selinux-setup --store-only")
+        assert "store labels are up to date" in out, out
   '';
 }

@@ -120,7 +120,7 @@ Each line is one kind of denial: which domain, on what, how often.
 - **The policy is part of the system.** It is built with the configuration and switches and rolls back with the generation. `semodule` and `setsebool -P` have nothing to write to; use `security.selinux.booleans` and the options above.
 - **Store files get harmless labels by pattern**: programs `bin_t`, libraries `lib_t`. Anyone can build a store path, so a pattern never grants privilege.
 - **Privileged labels go to exact store paths** that the configuration names. `security.selinux.services` does this for you; `security.selinux.entrypoints` does it for a single file.
-- **Labels look after themselves.** They are set at boot and at switch, and restored when anything replaces a labelled file. `nixos-selinux relabel` redoes everything by hand if you ever want to.
+- **Labels look after themselves.** They are set when a generation is installed (`switch`, `boot` or `test`), checked at boot, and restored when anything replaces a labelled file. `nixos-selinux relabel` redoes everything by hand if you ever want to.
 
 ### Confined builds {#module-security-selinux-confined-builds}
 

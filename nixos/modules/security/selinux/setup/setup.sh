@@ -25,6 +25,7 @@ exact_rev=
 exact_file=
 remounted=
 relabel_mutable=
+store_only=
 force=
 exact=()
 relabel=()
@@ -44,6 +45,7 @@ while [ $# -gt 0 ]; do
     --relabel-mutable) relabel_mutable=1; shift ;;
     --persistent-root) persistent+=("$2"); shift 2 ;;
     --force) force=1; shift ;;
+    --store-only) store_only=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -55,6 +57,12 @@ log() { echo "selinux-setup: $*"; }
 if [ -n "$remounted" ]; then
   mount -o remount,bind,rw "$store"
 fi
+
+# --store-only labels the store and nothing else. It is used when a
+# generation is installed without being activated, so that its first
+# boot has nothing left to label. That needs no SELinux in the running
+# kernel: a kernel without it stores the labels as they are given.
+if [ -z "$store_only" ]; then
 
 if [ ! -e /sys/fs/selinux/load ]; then
   log "SELinux is not active in the running kernel, nothing to do"
@@ -164,6 +172,8 @@ if [ -n "$relabel_mutable" ]; then
     fi
   done
 fi
+
+fi # not --store-only
 
 # --- Nix store ----------------------------------------------------------------
 
