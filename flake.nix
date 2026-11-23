@@ -7,7 +7,8 @@
 
   # Only for the test that runs SELinux together with impermanence.
   inputs.impermanence = {
-    url = "https://github.com/nix-community/impermanence/archive/master.tar.gz";
+    # Pinned to a commit, so that the locked hash stays valid.
+    url = "https://github.com/nix-community/impermanence/archive/fa627f4c8b8e92f58f58a73d99ee4e1304e64eb2.tar.gz";
     flake = false;
   };
 
