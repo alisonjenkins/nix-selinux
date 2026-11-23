@@ -2,6 +2,7 @@ policy_module(nixos)
 
 gen_require(`
 	attribute domain;
+	attribute non_security_file_type;
 	type initrc_t;
 	type init_t;
 	type var_run_t;
@@ -191,8 +192,11 @@ allow systemd_tmpfiles_t ramfs_t:dir { getattr search setattr };
 # NixOS marks /var/empty immutable.
 allow systemd_tmpfiles_t self:capability linux_immutable;
 
-# The dynamic loader stub NixOS installs in /lib64 is a symlink.
-allow systemd_tmpfiles_t lib_t:lnk_file manage_lnk_file_perms;
+# NixOS modules use tmpfiles rules to place symbolic links wherever a
+# service wants them: the loader stub in /lib64, k3s's image directory
+# under /var/lib. The policy's switch for this covers files and
+# directories but not links.
+allow systemd_tmpfiles_t non_security_file_type:lnk_file manage_lnk_file_perms;
 
 allow systemd_machine_id_setup_t self:process getcap;
 allow systemd_machine_id_setup_t { fs_t nsfs_t }:filesystem getattr;
