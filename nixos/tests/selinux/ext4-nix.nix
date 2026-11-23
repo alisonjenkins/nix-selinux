@@ -67,6 +67,11 @@ in
   # with it and query its database.
   nix.enable = true;
 
+  # NixOS 26.05's VM module registers store paths from a file on the
+  # host's store, which this image does not contain. The command below
+  # does the same from the image's own list.
+  systemd.services.register-nix-paths.enable = false;
+
   # Tell Nix about the store paths in the image, as an installer would have.
   boot.postBootCommands = lib.mkBefore ''
     if [ -f /nix/registration ]; then
