@@ -101,7 +101,16 @@ in
     );
 
     programs.ssh.package = lib.mkIf cfg.loginContexts (
-      lib.mkDefault (pkgs.openssh.override { withSelinux = true; })
+      lib.mkDefault (
+        # Older nixpkgs has no build flag for it.
+        if (lib.functionArgs pkgs.openssh.override) ? withSelinux then
+          pkgs.openssh.override { withSelinux = true; }
+        else
+          pkgs.openssh.overrideAttrs (old: {
+            buildInputs = old.buildInputs ++ [ pkgs.libselinux ];
+            configureFlags = old.configureFlags ++ [ "--with-selinux" ];
+          })
+      )
     );
 
     security = {

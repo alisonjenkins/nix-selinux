@@ -96,7 +96,9 @@
 
           selinux-store-maintenance = selinuxTest pkgs ./nixos/tests/selinux/store-maintenance.nix;
 
-          # Not a pass/fail test of the policy: prints what it denies.
+          selinux-k3s = selinuxTest pkgs (import ./nixos/tests/selinux/k3s.nix { });
+          # Not pass/fail tests of the policy: they print what it denies.
+          selinux-k3s-audit = selinuxTest pkgs (import ./nixos/tests/selinux/k3s.nix { enforcing = false; });
           selinux-refpolicy-audit = selinuxTest pkgs (
             import ./nixos/tests/selinux/refpolicy.nix { enforcing = false; }
           );

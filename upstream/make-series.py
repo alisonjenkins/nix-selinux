@@ -37,7 +37,7 @@ TEST_ENTRIES = {
 }
 # Kept in this repository only: evaluation checks that need the flake,
 # and the measurement, which is too large for the test set.
-TESTS_NOT_UPSTREAM = {"eval.nix", "measure.nix", "smoke.nix"}
+TESTS_NOT_UPSTREAM = {"eval.nix", "k3s.nix", "measure.nix", "smoke.nix"}
 
 RELEASE_NOTE = (
     "- SELinux support, available as [security.selinux](#opt-security.selinux.enable). "
