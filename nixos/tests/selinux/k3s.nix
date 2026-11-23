@@ -56,20 +56,22 @@
         extraFlags = [ "--pause-image test.local/pause:local" ];
       };
 
-      environment.systemPackages = [ pkgs.kubectl ];
-      environment.sessionVariables.KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
-      environment.etc."selinux-test/pod.yaml".text = ''
-        apiVersion: v1
-        kind: Pod
-        metadata:
-          name: test
-        spec:
-          containers:
-          - name: test
-            image: test.local/pause:local
-            imagePullPolicy: Never
-            command: ["sh", "-c", "sleep inf"]
-      '';
+      environment = {
+        systemPackages = [ pkgs.kubectl ];
+        sessionVariables.KUBECONFIG = "/etc/rancher/k3s/k3s.yaml";
+        etc."selinux-test/pod.yaml".text = ''
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: test
+          spec:
+            containers:
+            - name: test
+              image: test.local/pause:local
+              imagePullPolicy: Never
+              command: ["sh", "-c", "sleep inf"]
+        '';
+      };
 
       virtualisation = {
         memorySize = 3072;
