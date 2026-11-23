@@ -126,16 +126,11 @@ in
 
     relabelPaths = lib.mkOption {
       type = lib.types.listOf lib.types.path;
-      default = [
-        "/etc"
-        "/var"
-        "/root"
-        "/home"
-        "/nix/var"
-      ];
+      default = [ "/" ];
       description = ''
-        Mutable paths whose labels are restored when the policy changes.
-        The Nix store is labelled separately and must not be listed here.
+        Where labels are restored when the policy's rules change: these
+        paths and the disk filesystems mounted below them. The Nix store
+        is labelled separately and must not be listed here.
       '';
     };
 

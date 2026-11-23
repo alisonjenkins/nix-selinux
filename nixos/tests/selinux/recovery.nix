@@ -79,9 +79,10 @@ in
     with subtest("a system whose files have no labels boots enforcing"):
         existing.wait_for_unit("multi-user.target")
         existing.succeed(
-            # /var/empty is immutable and stays as it is.
-            "chcon -R -h -t unlabeled_t /etc /var /root /home || true",
-            "stat -c %C /etc /var/lib /var/log/journal | grep -c unlabeled_t | grep -qx 3",
+            # /var/empty is immutable, which forbids a new label too.
+            "chattr -i /var/empty",
+            "chcon -R -h -t unlabeled_t /etc /var /root /home",
+            "chattr +i /var/empty",
             "rm -f /var/lib/selinux-nixos/relabelled",
             "sync",
         )
@@ -93,12 +94,13 @@ in
         assert failed == "", failed
         # Before anything else ran, in the initrd.
         early = existing.succeed("journalctl -b -u initrd-selinux-setup.service --no-pager")
-        assert "relabelling /etc" in early, early
+        assert "relabelling /" in early, early
         stray = existing.succeed(
             "getfattr -R -h --absolute-names -n security.selinux /etc /var /root /home 2>/dev/null"
             " | grep -B1 ':unlabeled_t:' || true"
         ).strip()
         assert stray == "", stray
+        assert "i" in existing.succeed("lsattr -d /var/empty").split()[0]
         denials = existing.succeed("journalctl -b --no-pager | grep 'avc:  denied' || true").strip()
         assert denials == "", denials
 
@@ -112,8 +114,11 @@ in
         print(out)
         assert "labelling" in out, out
         assert "init_exec_t" in disabled.succeed(label)
+        # And everything else: journald will find its files labelled.
+        assert "var_log_t" in disabled.succeed("getfattr --only-values -n security.selinux /var/log")
+        assert "etc_t" in disabled.succeed("getfattr --only-values -n security.selinux /etc")
         # What the next boot will find: nothing left to do.
-        out = disabled.succeed("/run/current-system/selinux-setup --store-only")
+        out = disabled.succeed("/run/current-system/selinux-setup --preinstall")
         assert "store labels are up to date" in out, out
   '';
 }

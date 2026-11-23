@@ -234,10 +234,10 @@ in
 
       # Before a generation is installed:
       #
-      # - Label its store paths now where activation will not: with `boot`,
-      #   and while the running kernel has no SELinux (the generation that
-      #   first enables it). The next boot then only verifies. Should this
-      #   fail, that boot labels as before.
+      # - Label now, while the machine is up, what the next boot would
+      #   otherwise label: with `boot`, and while the running kernel has no
+      #   SELinux (the generation that first enables it). That boot then
+      #   only verifies. Should this fail, it labels as before.
       # - Refuse to switch to a generation whose policy the running kernel
       #   cannot load, before anything of it is activated.
       preSwitchChecks.selinux = ''
@@ -247,8 +247,8 @@ in
           *) exit 0 ;;
         esac
         if [ "$action" = boot ] || [ ! -e /sys/fs/selinux/load ]; then
-          ${setup} --store-only \
-            || echo "security.selinux: could not label the new store paths now; the next boot will" >&2
+          ${setup} --preinstall \
+            || echo "security.selinux: could not label everything now; the next boot will" >&2
         fi
         [ "$action" != boot ] || exit 0
         [ -r /sys/fs/selinux/policyvers ] || exit 0

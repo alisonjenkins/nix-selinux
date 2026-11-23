@@ -26,7 +26,7 @@ exact_file=
 remounted=
 relabel_mutable=
 record=1
-store_only=
+preinstall=
 force=
 exact=()
 relabel=()
@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
     --relabel-mutable-early) relabel_mutable=1; record=; shift ;;
     --persistent-root) persistent+=("$2"); shift 2 ;;
     --force) force=1; shift ;;
-    --store-only) store_only=1; shift ;;
+    --preinstall) preinstall=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -60,16 +60,27 @@ if [ -n "$remounted" ]; then
   mount -o remount,bind,rw "$store"
 fi
 
-# --store-only labels the store and nothing else. It is used when a
-# generation is installed without being activated, so that its first
-# boot has nothing left to label. That needs no SELinux in the running
-# kernel: a kernel without it stores the labels as they are given.
-if [ -z "$store_only" ]; then
+active=
+if [ -e /sys/fs/selinux/load ]; then active=1; fi
 
-if [ ! -e /sys/fs/selinux/load ]; then
+if [ -n "$preinstall" ]; then
+  # A generation is being installed without being activated: label now,
+  # while the machine is up, what its first boot would otherwise label.
+  # A kernel without SELinux stores labels as they are given, so on a
+  # system that is about to enable it, that is every file. A kernel with
+  # SELinux already has the mutable paths right; only the store is new.
+  record=
+  if [ -z "$active" ]; then relabel_mutable=1; else relabel_mutable=; fi
+elif [ -z "$active" ]; then
   log "SELinux is not active in the running kernel, nothing to do"
   exit 0
 fi
+
+# After the re-execution for a writable store (below), only the store is
+# left to do.
+if [ -n "$remounted" ]; then relabel_mutable=; fi
+
+if [ -z "$preinstall" ]; then
 
 # --- Policy -------------------------------------------------------------------
 
@@ -80,6 +91,8 @@ if [ "$current" = kernel ]; then
   dd if="$policy" of=/sys/fs/selinux/load bs=256M status=none
   log "loaded policy $policy"
 fi
+
+fi # not --preinstall
 
 label_one() {
   # Label a single path without descending into it, by the rules for the
@@ -145,21 +158,41 @@ if [ -n "$relabel_mutable" ]; then
       if [ -e "$path" ]; then existing+=("$path"); fi
     done
     # setfiles stays on the filesystem of each path it is given, so add
-    # the filesystems mounted below them: a separate /home, a bind-mounted
-    # file. Not memory or container filesystems, and not persistent
-    # storage, which has its own pass below.
+    # the disk filesystems mounted below them: a separate /home, a
+    # bind-mounted file. Not the store and not persistent storage, which
+    # have their own passes.
     while read -r target fstype; do
-      case "$fstype" in tmpfs | ramfs | overlay) continue ;; esac
+      case "$fstype" in
+        ext2 | ext3 | ext4 | xfs | btrfs | f2fs | bcachefs | jfs | zfs) ;;
+        *) continue ;;
+      esac
+      case "$target" in "$store" | "$store"/*) continue ;; esac
+      if [[ $persistent_devs == *" $(stat -c %d "$target") "* ]]; then continue; fi
       for path in "${existing[@]}"; do
-        if [[ $target == "$path"/* && $persistent_devs != *" $(stat -c %d "$target") "* ]]; then
+        if [[ $path == / || $target == "$path"/* ]]; then
           existing+=("$target")
           break
         fi
       done
-    done < <(findmnt -rno TARGET,FSTYPE,OPTIONS | awk '$3 ~ /(^|,)seclabel(,|$)/ { print $1, $2 }')
+    done < <(findmnt -rno TARGET,FSTYPE | grep -v '^/ ')
+    exclude=(-e "$store")
+    for root in "${persistent[@]}"; do
+      if [ -d "$root" ]; then exclude+=(-e "$root"); fi
+    done
     if [ ${#existing[@]} -gt 0 ]; then
       log "relabelling ${existing[*]}"
-      setfiles -F "$spec" "${existing[@]}"
+      # NixOS makes /var/empty immutable, which forbids a new label too.
+      locked=
+      if lsattr -d /var/empty 2>/dev/null | cut -d' ' -f1 | grep -q i; then
+        chattr -i /var/empty && locked=1
+      fi
+      # A file that cannot be relabelled must not stop the boot. The
+      # pass is not recorded as done then, and is tried again.
+      if ! setfiles -F "${exclude[@]}" "$spec" "${existing[@]}"; then
+        log "some files could not be relabelled"
+        record=
+      fi
+      if [ -n "$locked" ]; then chattr +i /var/empty; fi
     fi
     if [ -n "$record" ]; then
       mkdir -p "$stateDir"
@@ -175,16 +208,15 @@ if [ -n "$relabel_mutable" ]; then
     if [ -n "$force" ] || [ "$(cat "$root$stateDir/relabelled" 2>/dev/null || true)" != "$mutable_rev" ]; then
       log "relabelling $root as /"
       mkdir -p "$root$stateDir"
-      setfiles -F -r "$root" "$spec" "$root"
-      if [ -n "$record" ]; then
+      if ! setfiles -F -r "$root" "$spec" "$root"; then
+        log "some files in $root could not be relabelled"
+      elif [ -n "$record" ]; then
         echo "$mutable_rev" > "$root$stateDir/relabelled.tmp"
         mv "$root$stateDir/relabelled.tmp" "$root$stateDir/relabelled"
       fi
     fi
   done
 fi
-
-fi # not --store-only
 
 # --- Nix store ----------------------------------------------------------------
 
