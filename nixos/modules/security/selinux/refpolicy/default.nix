@@ -141,6 +141,12 @@
     ''}
     ${lib.getExe' policycoreutils "setfiles"} -c $out/policy/policy.${toString policyVersion} \
       $out/contexts/files/file_contexts
+    # Compiled forms, so that labelling does not parse and compile several
+    # thousand patterns on every run.
+    for rules in file_contexts file_contexts.homedirs; do
+      ${lib.getExe' libselinux "sefcontext_compile"} \
+        -o $out/contexts/files/$rules.bin $out/contexts/files/$rules
+    done
   '';
 
   passthru = (old.passthru or { }) // {

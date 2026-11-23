@@ -197,7 +197,9 @@ fi
 start=$(date +%s)
 if [ "$count" -gt 0 ]; then
   log "labelling $count store paths"
-  setfiles -F -f "$work/todo" "$spec"
+  # On every core: almost all of the time goes into reading and writing
+  # one attribute per file.
+  setfiles -T 0 -F -f "$work/todo" "$spec"
 fi
 if [ -s "$work/exact-files" ]; then
   if [ -n "$drift" ]; then log "restoring $drift exact labels"; fi
