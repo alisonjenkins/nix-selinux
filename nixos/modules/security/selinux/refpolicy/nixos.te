@@ -138,6 +138,9 @@ gen_require(`
 # daemon subscribes to in its own control group.
 allow { syslogd_t systemd_logind_t udev_t } cgroup_t:file rw_file_perms;
 allow systemd_modules_load_t cgroup_t:file read_file_perms;
+# modules-load checks memory settings under /proc/sys/vm.
+kernel_read_vm_sysctls(systemd_modules_load_t)
+kernel_read_vm_overcommit_sysctl(systemd_modules_load_t)
 
 # Service credentials are passed on a small tmpfs under /run/credentials.
 allow syslogd_t tmpfs_t:dir search_dir_perms;
@@ -217,6 +220,22 @@ allow systemd_journal_init_t etc_runtime_t:file read_file_perms;
 allow systemd_journal_init_t tty_device_t:chr_file rw_chr_file_perms;
 # Looking up a user or group goes through nscd on NixOS.
 nscd_use(systemd_journal_init_t)
+
+# Host keys are made on first boot by a plain service, in the generic
+# service domain. Give them their type from the start, by name.
+optional_policy(`
+	gen_require(`
+		type etc_t;
+		type sshd_key_t;
+	')
+
+	filetrans_pattern(initrc_t, etc_t, sshd_key_t, file, "ssh_host_rsa_key")
+	filetrans_pattern(initrc_t, etc_t, sshd_key_t, file, "ssh_host_rsa_key.pub")
+	filetrans_pattern(initrc_t, etc_t, sshd_key_t, file, "ssh_host_ed25519_key")
+	filetrans_pattern(initrc_t, etc_t, sshd_key_t, file, "ssh_host_ed25519_key.pub")
+	filetrans_pattern(initrc_t, etc_t, sshd_key_t, file, "ssh_host_ecdsa_key")
+	filetrans_pattern(initrc_t, etc_t, sshd_key_t, file, "ssh_host_ecdsa_key.pub")
+')
 
 # dbus-broker subscribes to systemd's unit state to activate services.
 optional_policy(`

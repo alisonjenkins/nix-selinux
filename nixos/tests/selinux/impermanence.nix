@@ -93,6 +93,9 @@
         # type its everyday name calls for.
         assert label("/var/log") == "system_u:object_r:var_log_t:s0", label("/var/log")
         assert label("/persist/var/log") == label("/var/log")
+        # Made by sshd's key service on the first boot, through a link.
+        key = label("/persist/etc/ssh/ssh_host_ed25519_key")
+        assert ":sshd_key_t:" in key, key
         assert ":user_home_dir_t:" in label("/home/alice"), label("/home/alice")
         assert ":user_home_t:" in label("/home/alice/documents"), label("/home/alice/documents")
 
@@ -129,9 +132,6 @@
     with subtest("a full relabel keeps the persisted files' labels"):
         machine.succeed("nixos-selinux relabel >&2")
         check()
-        # Created after the first boot's pass, so only now by its own rule.
-        key = label("/persist/etc/ssh/ssh_host_ed25519_key")
-        assert ":sshd_key_t:" in key, key
 
     with subtest("the user can log in over SSH and use the persisted directory"):
         machine.succeed(
