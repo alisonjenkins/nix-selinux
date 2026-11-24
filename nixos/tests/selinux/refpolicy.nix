@@ -262,7 +262,7 @@
             "udevadm settle",
         )
         machine.wait_until_succeeds("test -b /dev/spare/data", timeout=120)
-        machine.succeed("mount /dev/spare/data /mnt && umount /mnt")
+        machine.succeed("mkdir -p /mnt && mount /dev/spare/data /mnt && umount /mnt")
 
     with subtest("nothing was denied"):
         assert denials() == ""
@@ -319,7 +319,7 @@
         assert failed == "", failed
         # The volume group is found and activated again, through udev.
         machine.wait_until_succeeds("test -b /dev/spare/data", timeout=120)
-        machine.succeed("mount /dev/spare/data /mnt && umount /mnt")
+        machine.succeed("mkdir -p /mnt && mount /dev/spare/data /mnt && umount /mnt")
         assert denials() == ""
   '';
 }
