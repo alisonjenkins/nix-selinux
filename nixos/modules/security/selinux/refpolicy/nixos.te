@@ -282,6 +282,9 @@ optional_policy(`
 	allow system_dbusd_t init_t:system status;
 	# And watches its configuration directories under /etc for changes.
 	allow system_dbusd_t etc_t:dir watch;
+	# Clients pass data in sealed memory files, which the broker checks
+	# before it hands them on (seen with fwupd).
+	fs_rw_tmpfs_files(system_dbusd_t)
 ')
 
 ########################################
