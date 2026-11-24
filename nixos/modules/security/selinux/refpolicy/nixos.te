@@ -124,6 +124,7 @@ gen_require(`
 	type systemd_logind_t;
 	type systemd_machine_id_setup_t;
 	type systemd_modules_load_t;
+	type systemd_resolved_t;
 	type systemd_tmpfiles_t;
 	type systemd_user_runtime_dir_t;
 	type systemd_userdbd_runtime_t;
@@ -131,12 +132,13 @@ gen_require(`
 	type tty_device_t;
 	type udev_t;
 	type user_runtime_t;
+	type usr_t;
 	type var_log_t;
 ')
 
 # Memory pressure notifications, which every long-running systemd
 # daemon subscribes to in its own control group.
-allow { syslogd_t systemd_logind_t udev_t } cgroup_t:file rw_file_perms;
+allow { syslogd_t systemd_logind_t systemd_resolved_t udev_t } cgroup_t:file rw_file_perms;
 allow systemd_modules_load_t cgroup_t:file read_file_perms;
 # modules-load checks memory settings under /proc/sys/vm.
 kernel_read_vm_sysctls(systemd_modules_load_t)
@@ -150,6 +152,8 @@ allow syslogd_t tmpfs_t:dir search_dir_perms;
 # loaded in the initrd.
 allow udev_t tmpfs_t:file rw_file_perms;
 allow udev_t kernel_t:netlink_kobject_uevent_socket { getattr read write };
+# The hardware database is a package data file that udev maps.
+allow udev_t usr_t:file map;
 
 # logind serves its varlink interface next to the D-Bus one.
 allow systemd_logind_t init_runtime_t:sock_file manage_sock_file_perms;
@@ -241,9 +245,12 @@ optional_policy(`
 optional_policy(`
 	gen_require(`
 		type system_dbusd_t;
+		type etc_t;
 	')
 
 	allow system_dbusd_t init_t:system status;
+	# And watches its configuration directories under /etc for changes.
+	allow system_dbusd_t etc_t:dir watch;
 ')
 
 ########################################
