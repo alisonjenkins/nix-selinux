@@ -5,8 +5,19 @@
   # because it needs no GitHub API access to lock or fetch.
   inputs.nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
 
+  # Only for the test that runs SELinux together with impermanence.
+  inputs.impermanence = {
+    # Pinned to a commit, so that the locked hash stays valid.
+    url = "https://github.com/nix-community/impermanence/archive/fa627f4c8b8e92f58f58a73d99ee4e1304e64eb2.tar.gz";
+    flake = false;
+  };
+
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      impermanence,
+    }:
     let
       inherit (nixpkgs) lib;
       systems = [
@@ -91,6 +102,10 @@
           selinux-recovery = selinuxTest pkgs ./nixos/tests/selinux/recovery.nix;
 
           selinux-ephemeral-root = selinuxTest pkgs ./nixos/tests/selinux/ephemeral-root.nix;
+
+          selinux-impermanence = selinuxTest pkgs (
+            import ./nixos/tests/selinux/impermanence.nix { inherit impermanence; }
+          );
 
           selinux-refpolicy = selinuxTest pkgs (import ./nixos/tests/selinux/refpolicy.nix { });
 

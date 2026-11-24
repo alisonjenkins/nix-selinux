@@ -33,6 +33,9 @@ let
       --exact-rev ${exactRevision} \
       --exact-file ${cfg.policy}/nixos/exact-paths \
       ${lib.concatMapStringsSep " " (p: "--relabel ${lib.escapeShellArg p}") cfg.relabelPaths} \
+      ${
+        lib.concatMapStringsSep " " (p: "--persistent-root ${lib.escapeShellArg p}") cfg.persistentRoots
+      } \
       "$@"
   '';
 
@@ -114,7 +117,7 @@ in
         }
         trap cleanup EXIT
 
-        chroot /sysroot "$closure/selinux-setup"
+        chroot /sysroot "$closure/selinux-setup" --relabel-mutable-early
       '';
     };
 
@@ -145,6 +148,7 @@ in
             # These create and adjust files under the paths being relabelled.
             "systemd-tmpfiles-setup.service"
             "systemd-journal-flush.service"
+            "systemd-machine-id-commit.service"
           ];
           conflicts = [ "shutdown.target" ];
           serviceConfig = {
@@ -186,7 +190,11 @@ in
           wantedBy = [ "multi-user.target" ];
           serviceConfig = {
             Type = "oneshot";
-            ExecStart = "${lib.getExe' pkgs.coreutils "rm"} -f /var/lib/selinux-nixos/relabelled";
+            ExecStart = "${lib.getExe' pkgs.coreutils "rm"} -f ${
+              lib.concatMapStringsSep " " (root: "${root}/var/lib/selinux-nixos/relabelled") (
+                [ "" ] ++ cfg.persistentRoots
+              )
+            }";
           };
         };
 
@@ -224,13 +232,25 @@ in
         '';
       };
 
-      # Refuse to switch to a generation whose policy the running kernel
-      # cannot load, before anything of the new generation is activated.
+      # Before a generation is installed:
+      #
+      # - Label now, while the machine is up, what the next boot would
+      #   otherwise label: with `boot`, and while the running kernel has no
+      #   SELinux (the generation that first enables it). That boot then
+      #   only verifies. Should this fail, it labels as before.
+      # - Refuse to switch to a generation whose policy the running kernel
+      #   cannot load, before anything of it is activated.
       preSwitchChecks.selinux = ''
-        case "''${2:-}" in
-          switch | test) ;;
+        action="''${2:-}"
+        case "$action" in
+          switch | test | boot) ;;
           *) exit 0 ;;
         esac
+        if [ "$action" = boot ] || [ ! -e /sys/fs/selinux/load ]; then
+          ${setup} --preinstall \
+            || echo "security.selinux: could not label everything now; the next boot will" >&2
+        fi
+        [ "$action" != boot ] || exit 0
         [ -r /sys/fs/selinux/policyvers ] || exit 0
         policy=${policyFile}
         od=${lib.getExe' pkgs.coreutils "od"}

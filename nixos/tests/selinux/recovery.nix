@@ -1,6 +1,9 @@
 # The two ways out of an enforcing system that does not work, as they
 # would be typed into a boot loader entry: boot permissive once with
 # `enforcing=0`, or boot without SELinux by leaving it out of `lsm=`.
+#
+# The system without SELinux also stands in for one where it is about to
+# be enabled.
 let
   enforcingSystem = {
     imports = [
@@ -26,12 +29,21 @@ in
         boot.kernelParams = lib.mkAfter [ "enforcing=0" ];
       };
 
+    # An installation whose files have no labels: SELinux was just
+    # enabled on it, or it ran without for a while.
+    existing = enforcingSystem;
+
     disabled =
-      { lib, ... }:
+      { lib, pkgs, ... }:
       {
         imports = [ enforcingSystem ];
         # The kernel uses the last `lsm=` it is given.
         boot.kernelParams = lib.mkAfter [ "lsm=landlock,yama,bpf" ];
+        # Test VMs come without switch-to-configuration, and have no boot
+        # loader to install to.
+        system.switch.enable = true;
+        boot.loader.grub.enable = false;
+        system.build.installBootLoader = lib.mkForce (pkgs.writeShellScript "no-boot-loader" "true");
       };
   };
 
@@ -63,5 +75,56 @@ in
             "systemctl restart selinux-relabel-after-disabled.service",
         )
         disabled.fail("test -e /var/lib/selinux-nixos/relabelled")
+
+    with subtest("a system whose files have no labels boots enforcing"):
+        existing.wait_for_unit("multi-user.target")
+        existing.succeed(
+            # /var/empty is immutable, which forbids a new label too.
+            "chattr -i /var/empty",
+            "mkdir -p /srv/data /tmp/.leftover-unix",
+            "ln -s /nonexistent /tmp/.leftover-unix/link",
+            "chcon -R -h -t unlabeled_t /etc /var /root /home /srv /tmp/.leftover-unix",
+            "chattr +i /var/empty",
+            "rm -f /var/lib/selinux-nixos/relabelled",
+            "sync",
+        )
+        existing.crash()
+        existing.start()
+        existing.wait_for_unit("multi-user.target")
+        assert existing.succeed("getenforce").strip() == "Enforcing"
+        failed = existing.succeed("systemctl --failed --no-legend").strip()
+        assert failed == "", failed
+        # Before anything else ran, in the initrd.
+        early = existing.succeed("journalctl -b -u initrd-selinux-setup.service --no-pager")
+        assert "relabelling /" in early, early
+        # The pass after activation then only looks at what changed.
+        late = existing.succeed("journalctl -b -u selinux-relabel.service --no-pager")
+        assert "relabelling what changed in /" in late, late
+        stray = existing.succeed(
+            "getfattr -R -h --absolute-names -n security.selinux /etc /var /root /home /srv /tmp/.leftover-unix 2>/dev/null"
+            " | grep -B1 ':unlabeled_t:' || true"
+        ).strip()
+        assert stray == "", stray
+        assert "i" in existing.succeed("lsattr -d /var/empty").split()[0]
+        denials = existing.succeed("journalctl -b --no-pager | grep 'avc:  denied' || true").strip()
+        assert denials == "", denials
+
+    with subtest("installing a generation labels the store ahead of its first boot"):
+        # This system has never run with SELinux, as on the day it is first
+        # enabled: nothing in the store is labelled.
+        systemd = disabled.succeed("readlink -f /run/current-system/systemd/lib/systemd/systemd").strip()
+        label = f"getfattr --only-values -n security.selinux {systemd}"
+        disabled.fail(label)
+        out = disabled.succeed("/run/current-system/bin/switch-to-configuration boot 2>&1")
+        print(out)
+        assert "labelling" in out, out
+        assert "init_exec_t" in disabled.succeed(label)
+        # And everything else: journald will find its files labelled.
+        assert "var_log_t" in disabled.succeed("getfattr --only-values -n security.selinux /var/log")
+        assert "etc_t" in disabled.succeed("getfattr --only-values -n security.selinux /etc")
+        # What the next boot will find: nothing left to do.
+        out = disabled.succeed("/run/current-system/selinux-setup --preinstall")
+        assert "store labels are up to date" in out, out
+        assert "relabelling what changed in /" in out, out
   '';
 }

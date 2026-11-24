@@ -14,6 +14,7 @@ set -euo pipefail
 store=/nix/store
 marker=trusted.nixos-selinux
 stateDir=/var/lib/selinux-nixos
+stamp=$stateDir/labelled-at
 
 saved_args=("$@")
 
@@ -25,8 +26,12 @@ exact_rev=
 exact_file=
 remounted=
 relabel_mutable=
+record=1
+preinstall=
+force=
 exact=()
 relabel=()
+persistent=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -40,6 +45,10 @@ while [ $# -gt 0 ]; do
     --relabel) relabel+=("$2"); shift 2 ;;
     --remounted) remounted=1; shift ;;
     --relabel-mutable) relabel_mutable=1; shift ;;
+    --relabel-mutable-early) relabel_mutable=1; record=; shift ;;
+    --persistent-root) persistent+=("$2"); shift 2 ;;
+    --force) force=1; shift ;;
+    --preinstall) preinstall=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
   esac
 done
@@ -52,10 +61,27 @@ if [ -n "$remounted" ]; then
   mount -o remount,bind,rw "$store"
 fi
 
-if [ ! -e /sys/fs/selinux/load ]; then
+active=
+if [ -e /sys/fs/selinux/load ]; then active=1; fi
+
+if [ -n "$preinstall" ]; then
+  # A generation is being installed without being activated: label now,
+  # while the machine is up, what its first boot would otherwise label.
+  # A kernel without SELinux stores labels as they are given, so on a
+  # system that is about to enable it, that is every file. A kernel with
+  # SELinux already has the mutable paths right; only the store is new.
+  record=
+  if [ -z "$active" ]; then relabel_mutable=1; else relabel_mutable=; fi
+elif [ -z "$active" ]; then
   log "SELinux is not active in the running kernel, nothing to do"
   exit 0
 fi
+
+# After the re-execution for a writable store (below), only the store is
+# left to do.
+if [ -n "$remounted" ]; then relabel_mutable=; fi
+
+if [ -z "$preinstall" ]; then
 
 # --- Policy -------------------------------------------------------------------
 
@@ -67,12 +93,15 @@ if [ "$current" = kernel ]; then
   log "loaded policy $policy"
 fi
 
+fi # not --preinstall
+
 label_one() {
-  # Label a single path without descending into it.
+  # Label a single path without descending into it, by the rules for the
+  # second argument if there is one.
   local path=$1 context
-  context=$(selabel_lookup -b file -f "$spec" -k "$path" 2>/dev/null \
-    | sed -n 's/^Default context: //p')
-  if [ -n "$context" ]; then
+  context=$(selabel_lookup -b file -f "$spec" -k "${2:-$path}" 2>/dev/null \
+    | sed -n 's/^Default context: //p' || true)
+  if [ -n "$context" ] && [ "$context" != "<<none>>" ]; then
     setfilecon "$context" "$path" 2>/dev/null || true
   fi
 }
@@ -95,27 +124,217 @@ for dir in / /etc /var /var/lib /var/log /nix /nix/var "$store" /home /root /tmp
   if [ -d "$dir" ]; then label_one "$dir"; fi
 done
 
+# Persistent storage of an ephemeral root (impermanence): /persist/var/log
+# is the same directory as /var/log and gets the same label. Its top
+# levels are labelled every time for the same reason as above.
+for root in "${persistent[@]}"; do
+  if [ -d "$root" ]; then label_one "$root" /; fi
+  for dir in /etc /var /var/lib /var/log /home /root; do
+    if [ -d "$root$dir" ]; then label_one "$root$dir" "$dir"; fi
+  done
+done
+
 # Symlinks that activation creates under /run and every domain follows.
 for link in /run/current-system /run/booted-system; do
   if [ -L "$link" ]; then setfiles -F "$spec" "$link" 2>/dev/null || true; fi
 done
 
 # A full pass over the mutable paths, when asked to and only if the
-# labelling rules changed since the last one. This runs after activation,
-# so it also corrects what inheritance alone got wrong.
-if [ -n "$relabel_mutable" ] \
-  && [ "$(cat "$stateDir/relabelled" 2>/dev/null || true)" != "$mutable_rev" ]; then
-  existing=()
-  for path in "${relabel[@]}"; do
-    if [ -e "$path" ]; then existing+=("$path"); fi
+# labelling rules changed since the last one.
+#
+# It runs twice in a boot. Early, in the initrd: on a system that has
+# files but no labels yet (SELinux was just enabled, or it was booted
+# without), nothing may start before they are labelled. And again after
+# activation, to correct what inheritance alone got wrong in the files
+# activation made. Only the second one records that the pass is done.
+if [ -n "$relabel_mutable" ]; then
+  persistent_devs=" "
+  for root in "${persistent[@]}"; do
+    if [ -d "$root" ]; then persistent_devs+="$(stat -c %d "$root") "; fi
   done
-  if [ ${#existing[@]} -gt 0 ]; then
-    log "relabelling ${existing[*]}"
-    setfiles -F "$spec" "${existing[@]}"
+
+  if [ -n "$force" ] || [ "$(cat "$stateDir/relabelled" 2>/dev/null || true)" != "$mutable_rev" ]; then
+    existing=()
+    for path in "${relabel[@]}"; do
+      if [ -e "$path" ]; then existing+=("$path"); fi
+    done
+    # setfiles stays on the filesystem of each path it is given, so add
+    # the disk filesystems mounted below them: a separate /home, a
+    # bind-mounted file. Not the store and not persistent storage, which
+    # have their own passes.
+    while read -r target fstype; do
+      case "$fstype" in
+        ext2 | ext3 | ext4 | xfs | btrfs | f2fs | bcachefs | jfs | zfs) ;;
+        *) continue ;;
+      esac
+      case "$target" in "$store" | "$store"/*) continue ;; esac
+      if [[ $persistent_devs == *" $(stat -c %d "$target") "* ]]; then continue; fi
+      for path in "${existing[@]}"; do
+        if [[ $path == / || $target == "$path"/* ]]; then
+          existing+=("$target")
+          break
+        fi
+      done
+    done < <(findmnt -rno TARGET,FSTYPE | grep -v '^/ ')
+    exclude=(-e "$store")
+    for root in "${persistent[@]}"; do
+      if [ -d "$root" ]; then exclude+=(-e "$root"); fi
+    done
+    if [ ${#existing[@]} -gt 0 ]; then
+      # A full pass reads every file, about half a minute per million.
+      # It leaves a note of when it started and what it covered, so that
+      # the next pass, later in the same boot or on the first boot after
+      # an install, only looks at files changed since. The note is not
+      # trusted if the clock is behind it.
+      covered=()
+      if [ -z "$force" ] \
+        && [ "$(head -n 1 "$stamp" 2>/dev/null || true)" = "$mutable_rev" ] \
+        && [ "$(date +%s)" -ge "$(stat -c %Y "$stamp")" ]; then
+        mapfile -t covered < <(tail -n +2 "$stamp")
+      fi
+      full=()
+      changed=()
+      for path in "${existing[@]}"; do
+        if printf '%s\n' "${covered[@]}" | grep -qxF -- "$path"; then
+          changed+=("$path")
+        else
+          full+=("$path")
+        fi
+      done
+      mkdir -p "$stateDir"
+      {
+        echo "$mutable_rev"
+        printf '%s\n' "${existing[@]}"
+      } > "$stamp.new"
+
+      # NixOS makes /var/empty immutable, which forbids a new label too.
+      locked=
+      if lsattr -d /var/empty 2>/dev/null | cut -d' ' -f1 | grep -q i; then
+        chattr -i /var/empty && locked=1
+      fi
+      # A file that cannot be relabelled must not stop the boot. The
+      # pass is not recorded as done then, and is tried again.
+      failed=
+      prune=(-path "$store")
+      for root in "${persistent[@]}"; do prune+=(-o -path "$root"); done
+      # Lists what is newer than a reference file below the given paths,
+      # in one walk, and prints how many that is.
+      select_newer() {
+        local newer=$1 reference=$2
+        shift 2
+        # A file that vanishes meanwhile is no reason to fail.
+        find "$@" -xdev \( "${prune[@]}" \) -prune -o "$newer" "$reference" -printf '%y\t%p\0' \
+          > "$stamp.selected" 2>/dev/null || true
+        tr -cd '\0' < "$stamp.selected" | wc -c
+      }
+      # Labels what was listed, one by one. setfiles would descend into
+      # the directories among them, so those are looked up and set here,
+      # all in one go.
+      label_selected() {
+        gawk -v files="$stamp.files" -v dirs="$stamp.dirs" '
+          BEGIN { RS = "\0"; printf "" > files; printf "" > dirs }
+          { path = substr($0, 3) }
+          /^d/ { print path > dirs; next }
+          { printf "%s\0", path > files }
+        ' "$stamp.selected"
+        if [ -s "$stamp.files" ]; then
+          setfiles -0 -F -f "$stamp.files" "$spec" || failed=1
+        fi
+        xargs -a "$stamp.dirs" -d '\n' -r matchpathcon -f "$spec" \
+          | awk -F'\t' '$2 != "<<none>>" { print $2 "\t" $1 }' > "$stamp.contexts" || true
+        cut -f1 "$stamp.contexts" | sort -u | while IFS= read -r context; do
+          awk -F'\t' -v context="$context" '$1 == context { print $2 }' "$stamp.contexts" \
+            | xargs -d '\n' -r setfattr -h -n security.selinux -v "$context" 2>/dev/null || true
+        done
+      }
+
+      : > "$stamp.start"
+      # Going through a long list one by one is slower than a full pass.
+      if [ ${#changed[@]} -gt 0 ]; then
+        if [ "$(select_newer -newercm "$stamp" "${changed[@]}")" -gt 20000 ]; then
+          full+=("${changed[@]}")
+          changed=()
+        fi
+      fi
+      if [ ${#changed[@]} -gt 0 ]; then
+        log "relabelling what changed in ${changed[*]}"
+        label_selected
+      fi
+      if [ ${#full[@]} -gt 0 ]; then
+        log "relabelling ${full[*]}"
+        setfiles -F "${exclude[@]}" "$spec" "${full[@]}" || failed=1
+        # Setting a label counts as a change, so the note must say when
+        # the pass ended. Files written while it ran may have been
+        # missed, and are done now; those are few, because setting a
+        # label does not touch a file's modification time. (A file put
+        # in place in those seconds with an old modification time is
+        # not seen. On a kernel with SELinux it has a label anyway.)
+        select_newer -newermm "$stamp.start" "${full[@]}" > /dev/null
+        label_selected
+        touch "$stamp.new"
+      else
+        touch -r "$stamp.start" "$stamp.new"
+      fi
+      rm -f "$stamp.start" "$stamp.selected" "$stamp.files" "$stamp.dirs" "$stamp.contexts"
+      if [ -n "$failed" ]; then
+        log "some files could not be relabelled"
+        record=
+        rm -f "$stamp.new"
+      else
+        # A note that covers more than this pass saw (filesystems that
+        # are not mounted yet in the initrd) stays as it is.
+        keep=
+        for path in "${covered[@]}"; do
+          if ! printf '%s\n' "${existing[@]}" | grep -qxF -- "$path"; then keep=1; fi
+        done
+        if [ -n "$keep" ]; then rm -f "$stamp.new"; else mv "$stamp.new" "$stamp"; fi
+      fi
+      if [ -n "$locked" ]; then chattr +i /var/empty; fi
+      # (setfattr, not setfilecon: it carries on past a file it cannot
+      # label, such as the mount point of a filesystem without labels.)
+      # The rules leave the content of temporary directories alone.
+      # Leftovers from before SELinux have no label at all there; give
+      # them their directory's.
+      for dir in /tmp /var/tmp; do
+        if [ ! -d "$dir" ] || [ -L "$dir" ]; then continue; fi
+        context=$(getfattr -h --only-values -n security.selinux "$dir" 2>/dev/null | tr -d '\0' || true)
+        if [ -z "$context" ]; then continue; fi
+        find "$dir" -xdev -mindepth 1 -print0 \
+          | xargs -0 -r getfattr -h --absolute-names -n security.selinux 2>&1 \
+          | awk '
+              /^# file: / { file = substr($0, 9) }
+              /^security.selinux=.*:unlabeled_t:/ { print file }
+              /: security.selinux: No such attribute$/ {
+                sub(/: security.selinux: No such attribute$/, "")
+                print
+              }
+            ' \
+          | xargs -d '\n' -r setfattr -h -n security.selinux -v "$context" 2>/dev/null || true
+      done
+    fi
+    if [ -n "$record" ]; then
+      mkdir -p "$stateDir"
+      echo "$mutable_rev" > "$stateDir/relabelled.tmp"
+      mv "$stateDir/relabelled.tmp" "$stateDir/relabelled"
+      rm -f "$stamp"
+    fi
   fi
-  mkdir -p "$stateDir"
-  echo "$mutable_rev" > "$stateDir/relabelled.tmp"
-  mv "$stateDir/relabelled.tmp" "$stateDir/relabelled"
+
+  # Persistent storage keeps its own record, because the one above is
+  # gone on every boot of an ephemeral root.
+  for root in "${persistent[@]}"; do
+    [ -d "$root" ] || continue
+    if [ -n "$force" ] || [ "$(cat "$root$stateDir/relabelled" 2>/dev/null || true)" != "$mutable_rev" ]; then
+      log "relabelling $root as /"
+      mkdir -p "$root$stateDir"
+      if ! setfiles -F -r "$root" "$spec" "$root"; then
+        log "some files in $root could not be relabelled"
+      elif [ -n "$record" ]; then
+        echo "$mutable_rev" > "$root$stateDir/relabelled.tmp"
+        mv "$root$stateDir/relabelled.tmp" "$root$stateDir/relabelled"
+      fi
+    fi
+  done
 fi
 
 # --- Nix store ----------------------------------------------------------------
@@ -191,6 +410,8 @@ if [ ! -w "$store" ]; then
     echo "selinux-setup: cannot make $store writable" >&2
     exit 1
   fi
+  # exec leaves no chance for the exit trap.
+  rm -rf "$work"
   exec unshare --mount -- "$0" --remounted "${saved_args[@]}"
 fi
 

@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  options,
   ...
 }:
 let
@@ -125,16 +126,27 @@ in
 
     relabelPaths = lib.mkOption {
       type = lib.types.listOf lib.types.path;
-      default = [
-        "/etc"
-        "/var"
-        "/root"
-        "/home"
-        "/nix/var"
-      ];
+      default = [ "/" ];
       description = ''
-        Mutable paths whose labels are restored when the policy changes.
-        The Nix store is labelled separately and must not be listed here.
+        Where labels are restored when the policy's rules change: these
+        paths and the disk filesystems mounted below them. The Nix store
+        is labelled separately and must not be listed here.
+      '';
+    };
+
+    persistentRoots = lib.mkOption {
+      type = lib.types.listOf lib.types.path;
+      default = lib.optionals (options.environment ? persistence) (
+        lib.mapAttrsToList (_: storage: storage.persistentStoragePath) (
+          lib.filterAttrs (_: storage: storage.enable or true) config.environment.persistence
+        )
+      );
+      defaultText = lib.literalMD "the storage paths of `environment.persistence` (impermanence), if that module is in use";
+      example = [ "/persist" ];
+      description = ''
+        Directories that hold the persistent part of an ephemeral root,
+        laid out like `/`: `/persist/var/log` is bind-mounted at
+        `/var/log`. Files in them are labelled as their everyday path.
       '';
     };
 

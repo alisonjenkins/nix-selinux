@@ -7,6 +7,7 @@
   gnugrep,
   gnused,
   attr,
+  e2fsprogs,
   util-linux,
   libselinux,
   policycoreutils,
@@ -22,6 +23,7 @@ writeShellApplication {
     gnugrep
     gnused
     attr
+    e2fsprogs
     util-linux
     libselinux
     policycoreutils
