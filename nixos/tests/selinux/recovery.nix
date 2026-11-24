@@ -85,6 +85,9 @@ in
             "ln -s /nonexistent /tmp/.leftover-unix/link",
             "chcon -R -h -t unlabeled_t /etc /var /root /home /srv /tmp/.leftover-unix",
             "chattr +i /var/empty",
+            # The optimiser's directory of links, made before SELinux was on.
+            "unshare -m sh -c 'mount -o remount,rw /nix/store && mkdir -p /nix/store/.links"
+            " && chcon -t unlabeled_t /nix/store/.links'",
             "rm -f /var/lib/selinux-nixos/relabelled",
             "sync",
         )
@@ -105,6 +108,8 @@ in
             " | grep -B1 ':unlabeled_t:' || true"
         ).strip()
         assert stray == "", stray
+        links = existing.succeed("stat -c %C /nix/store/.links").strip()
+        assert links == "system_u:object_r:nix_store_t:s0", links
         assert "i" in existing.succeed("lsattr -d /var/empty").split()[0]
         denials = existing.succeed("journalctl -b --no-pager | grep 'avc:  denied' || true").strip()
         assert denials == "", denials
