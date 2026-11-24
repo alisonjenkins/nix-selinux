@@ -215,26 +215,19 @@ if [ -n "$relabel_mutable" ]; then
       # A file that cannot be relabelled must not stop the boot. The
       # pass is not recorded as done then, and is tried again.
       failed=
-      if [ ${#full[@]} -gt 0 ]; then
-        log "relabelling ${full[*]}"
-        setfiles -F "${exclude[@]}" "$spec" "${full[@]}" || failed=1
-      fi
-      if [ ${#changed[@]} -gt 0 ]; then
-        log "relabelling what changed in ${changed[*]}"
-        prune=(-path "$store")
-        for root in "${persistent[@]}"; do prune+=(-o -path "$root"); done
-        find "${changed[@]}" -xdev \( "${prune[@]}" \) -prune -o -newercm "$stamp" -print0 \
-          > "$stamp.changed"
-        # setfiles descends into directories, so those are looked up and
-        # set here, all in one go.
-        : > "$stamp.dirs"
-        while IFS= read -r -d "" path; do
-          if [ -d "$path" ] && [ ! -L "$path" ]; then
-            printf '%s\n' "$path" >> "$stamp.dirs"
-          else
-            printf '%s\0' "$path"
-          fi
-        done < "$stamp.changed" > "$stamp.files"
+      prune=(-path "$store")
+      for root in "${persistent[@]}"; do prune+=(-o -path "$root"); done
+      # Labels the files that find selects below the given paths, one by
+      # one. setfiles would descend into the directories among them, so
+      # those are looked up and set here, all in one go.
+      label_selected() {
+        local newer=$1 reference=$2
+        shift 2
+        # A file that vanishes meanwhile is no reason to fail.
+        find "$@" -xdev \( "${prune[@]}" \) -prune -o "$newer" "$reference" ! -type d -print0 \
+          > "$stamp.files" 2>/dev/null || true
+        find "$@" -xdev \( "${prune[@]}" \) -prune -o "$newer" "$reference" -type d -print \
+          > "$stamp.dirs" 2>/dev/null || true
         if [ -s "$stamp.files" ]; then
           setfiles -0 -F -f "$stamp.files" "$spec" || failed=1
         fi
@@ -244,8 +237,45 @@ if [ -n "$relabel_mutable" ]; then
           awk -F'\t' -v context="$context" '$1 == context { print $2 }' "$stamp.contexts" \
             | xargs -d '\n' -r setfilecon "$context" || true
         done
-        rm -f "$stamp.changed" "$stamp.files" "$stamp.dirs" "$stamp.contexts"
+      }
+
+      # Going through a long list one by one is slower than a full pass.
+      if [ ${#changed[@]} -gt 0 ]; then
+        count=$({ find "${changed[@]}" -xdev \( "${prune[@]}" \) -prune -o -newercm "$stamp" -print \
+          2>/dev/null || true; } | head -n 20001 | wc -l)
+        if [ "$count" -gt 20000 ]; then
+          full+=("${changed[@]}")
+          changed=()
+        fi
       fi
+
+      : > "$stamp.start"
+      if [ ${#changed[@]} -gt 0 ]; then
+        log "relabelling what changed in ${changed[*]}"
+        label_selected -newercm "$stamp" "${changed[@]}"
+      fi
+      if [ ${#full[@]} -gt 0 ]; then
+        log "relabelling ${full[*]}"
+        setfiles -F "${exclude[@]}" "$spec" "${full[@]}" || failed=1
+        # Setting a label counts as a change, so the note must say when
+        # the pass ended. What was created while it ran may have been
+        # missed and is done now. If the filesystem cannot tell when a
+        # file was created, the note says when the pass started, and the
+        # next pass does more than it needs to.
+        created=1
+        for path in "${full[@]}"; do
+          find "$path" -maxdepth 0 -newerBm "$stamp.start" > /dev/null 2>&1 || created=
+        done
+        if [ -n "$created" ]; then
+          label_selected -newerBm "$stamp.start" "${full[@]}"
+          touch "$stamp.new"
+        else
+          touch -r "$stamp.start" "$stamp.new"
+        fi
+      else
+        touch -r "$stamp.start" "$stamp.new"
+      fi
+      rm -f "$stamp.start" "$stamp.files" "$stamp.dirs" "$stamp.contexts"
       if [ -n "$failed" ]; then
         log "some files could not be relabelled"
         record=
@@ -378,6 +408,8 @@ if [ ! -w "$store" ]; then
     echo "selinux-setup: cannot make $store writable" >&2
     exit 1
   fi
+  # exec leaves no chance for the exit trap.
+  rm -rf "$work"
   exec unshare --mount -- "$0" --remounted "${saved_args[@]}"
 fi
 
