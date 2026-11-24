@@ -120,7 +120,7 @@ label_one() {
 [ -d /tmp ] || install -d -m 1777 /tmp
 [ -d /var/lib ] || install -d -m 0755 /var/lib
 [ -d /var/log ] || install -d -m 0755 /var/log
-for dir in / /etc /var /var/lib /var/log /nix /nix/var "$store" /home /root /tmp /boot /bin /usr /usr/bin; do
+for dir in / /etc /var /var/lib /var/log /nix /nix/var "$store" "$store/.links" /home /root /tmp /boot /bin /usr /usr/bin; do
   if [ -d "$dir" ]; then label_one "$dir"; fi
 done
 

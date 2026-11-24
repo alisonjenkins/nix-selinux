@@ -76,6 +76,8 @@ domain_role_change_exemption(initrc_t)
 # Seen at boot: PCRE just-in-time compilation in grep, and agetty.
 allow initrc_t self:process execmem;
 allow initrc_t self:capability2 checkpoint_restore;
+# Performance events, which eBPF programs such as Cilium's report through.
+allow initrc_t self:perf_event { open cpu kernel tracepoint read write };
 
 # The reference policy lets sshd start sessions only in its own user
 # domains. Logins here are mapped to the unconfined user.
@@ -139,6 +141,14 @@ gen_require(`
 # Memory pressure notifications, which every long-running systemd
 # daemon subscribes to in its own control group.
 allow { syslogd_t systemd_logind_t systemd_resolved_t udev_t } cgroup_t:file rw_file_perms;
+optional_policy(`
+	gen_require(`
+		type ntpd_t;
+	')
+	# systemd-timesyncd, which also checks whether IPv6 is switched off.
+	allow ntpd_t cgroup_t:file rw_file_perms;
+	kernel_read_net_sysctls(ntpd_t)
+')
 allow systemd_modules_load_t cgroup_t:file read_file_perms;
 # modules-load checks memory settings under /proc/sys/vm.
 kernel_read_vm_sysctls(systemd_modules_load_t)
@@ -154,6 +164,27 @@ allow udev_t tmpfs_t:file rw_file_perms;
 allow udev_t kernel_t:netlink_kobject_uevent_socket { getattr read write };
 # The hardware database is a package data file that udev maps.
 allow udev_t usr_t:file map;
+# The LVM udev rule runs lvm to note which physical volumes are present.
+# Programs in the store carry no type of their own, so it stays in udev's
+# domain.
+optional_policy(`
+	gen_require(`
+		type lvm_etc_t;
+	')
+	lvm_read_config(udev_t)
+	# /etc/lvm is a link into the store.
+	allow udev_t lvm_etc_t:lnk_file read_lnk_file_perms;
+	lvm_manage_runtime_dirs(udev_t)
+	lvm_manage_runtime_files(udev_t)
+	lvm_create_lock_dirs(udev_t)
+	lvm_manage_lock_files(udev_t)
+')
+# Once a volume group is complete the rule starts its activation as a
+# transient unit, and asks about it.
+allow udev_t init_t:system status;
+# An lvm command waits on a semaphore until udev has handled the device
+# it changed. Without this the command never returns.
+allow udev_t initrc_t:sem rw_sem_perms;
 
 # logind serves its varlink interface next to the D-Bus one.
 allow systemd_logind_t init_runtime_t:sock_file manage_sock_file_perms;

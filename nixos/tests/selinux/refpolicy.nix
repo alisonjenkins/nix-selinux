@@ -11,7 +11,7 @@
   name = if enforcing then "selinux-refpolicy" else "selinux-refpolicy-audit";
 
   nodes.machine =
-    { pkgs, ... }:
+    { lib, pkgs, ... }:
     let
       demoScript = ''
         echo "context=$(tr -d '\0' < /proc/self/attr/current)"
@@ -70,6 +70,10 @@
       };
 
       services.openssh.enable = true;
+      # Test VMs switch time synchronisation off. Real machines run it.
+      services.timesyncd.enable = lib.mkForce true;
+      # A spare disk for an LVM volume group.
+      virtualisation.emptyDiskImages = [ 256 ];
       environment.systemPackages = [
         pkgs.setools
         pkgs.sshpass
@@ -241,6 +245,25 @@
             rules = machine.succeed(f"sesearch -A -s nix_build_t {query} | grep -v ':False$' || true")
             assert "allow" not in rules, rules
 
+    with subtest("udev notes a new LVM physical volume"):
+        machine.wait_for_unit("systemd-timesyncd.service")
+        disk = machine.succeed("lsblk -dnpo NAME,SIZE | awk '$2 == \"256M\" { print $1 }'").strip()
+        machine.succeed(
+            f"pvcreate {disk} >&2",
+            f"vgcreate spare {disk} >&2",
+            "lvcreate -L 64M -n data spare >&2",
+            "mkfs.ext4 -q /dev/spare/data",
+        )
+        # Forget the volume group, and let udev find and activate it again.
+        machine.succeed(
+            "vgchange -an spare >&2",
+            "rm -f /run/lvm/pvs_online/* /run/lvm/vgs_online/*",
+            f"udevadm trigger --action=add {disk}",
+            "udevadm settle",
+        )
+        machine.wait_until_succeeds("test -b /dev/spare/data", timeout=120)
+        machine.succeed("mkdir -p /mnt && mount /dev/spare/data /mnt && umount /mnt")
+
     with subtest("nothing was denied"):
         assert denials() == ""
 
@@ -294,6 +317,9 @@
         assert machine.succeed("getenforce").strip() == ("Enforcing" if strict else "Permissive")
         failed = machine.succeed("systemctl --failed --no-legend").strip()
         assert failed == "", failed
+        # The volume group is found and activated again, through udev.
+        machine.wait_until_succeeds("test -b /dev/spare/data", timeout=120)
+        machine.succeed("mkdir -p /mnt && mount /dev/spare/data /mnt && umount /mnt")
         assert denials() == ""
   '';
 }
