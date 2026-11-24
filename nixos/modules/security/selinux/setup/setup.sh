@@ -217,17 +217,26 @@ if [ -n "$relabel_mutable" ]; then
       failed=
       prune=(-path "$store")
       for root in "${persistent[@]}"; do prune+=(-o -path "$root"); done
-      # Labels the files that find selects below the given paths, one by
-      # one. setfiles would descend into the directories among them, so
-      # those are looked up and set here, all in one go.
-      label_selected() {
+      # Lists what is newer than a reference file below the given paths,
+      # in one walk, and prints how many that is.
+      select_newer() {
         local newer=$1 reference=$2
         shift 2
         # A file that vanishes meanwhile is no reason to fail.
-        find "$@" -xdev \( "${prune[@]}" \) -prune -o "$newer" "$reference" ! -type d -print0 \
-          > "$stamp.files" 2>/dev/null || true
-        find "$@" -xdev \( "${prune[@]}" \) -prune -o "$newer" "$reference" -type d -print \
-          > "$stamp.dirs" 2>/dev/null || true
+        find "$@" -xdev \( "${prune[@]}" \) -prune -o "$newer" "$reference" -printf '%y\t%p\0' \
+          > "$stamp.selected" 2>/dev/null || true
+        tr -cd '\0' < "$stamp.selected" | wc -c
+      }
+      # Labels what was listed, one by one. setfiles would descend into
+      # the directories among them, so those are looked up and set here,
+      # all in one go.
+      label_selected() {
+        gawk -v files="$stamp.files" -v dirs="$stamp.dirs" '
+          BEGIN { RS = "\0"; printf "" > files; printf "" > dirs }
+          { path = substr($0, 3) }
+          /^d/ { print path > dirs; next }
+          { printf "%s\0", path > files }
+        ' "$stamp.selected"
         if [ -s "$stamp.files" ]; then
           setfiles -0 -F -f "$stamp.files" "$spec" || failed=1
         fi
@@ -239,20 +248,17 @@ if [ -n "$relabel_mutable" ]; then
         done
       }
 
+      : > "$stamp.start"
       # Going through a long list one by one is slower than a full pass.
       if [ ${#changed[@]} -gt 0 ]; then
-        count=$({ find "${changed[@]}" -xdev \( "${prune[@]}" \) -prune -o -newercm "$stamp" -print \
-          2>/dev/null || true; } | head -n 20001 | wc -l)
-        if [ "$count" -gt 20000 ]; then
+        if [ "$(select_newer -newercm "$stamp" "${changed[@]}")" -gt 20000 ]; then
           full+=("${changed[@]}")
           changed=()
         fi
       fi
-
-      : > "$stamp.start"
       if [ ${#changed[@]} -gt 0 ]; then
         log "relabelling what changed in ${changed[*]}"
-        label_selected -newercm "$stamp" "${changed[@]}"
+        label_selected
       fi
       if [ ${#full[@]} -gt 0 ]; then
         log "relabelling ${full[*]}"
@@ -263,12 +269,13 @@ if [ -n "$relabel_mutable" ]; then
         # label does not touch a file's modification time. (A file put
         # in place in those seconds with an old modification time is
         # not seen. On a kernel with SELinux it has a label anyway.)
-        label_selected -newermm "$stamp.start" "${full[@]}"
+        select_newer -newermm "$stamp.start" "${full[@]}" > /dev/null
+        label_selected
         touch "$stamp.new"
       else
         touch -r "$stamp.start" "$stamp.new"
       fi
-      rm -f "$stamp.start" "$stamp.files" "$stamp.dirs" "$stamp.contexts"
+      rm -f "$stamp.start" "$stamp.selected" "$stamp.files" "$stamp.dirs" "$stamp.contexts"
       if [ -n "$failed" ]; then
         log "some files could not be relabelled"
         record=
@@ -292,7 +299,7 @@ if [ -n "$relabel_mutable" ]; then
         if [ ! -d "$dir" ] || [ -L "$dir" ]; then continue; fi
         context=$(getfattr -h --only-values -n security.selinux "$dir" 2>/dev/null | tr -d '\0' || true)
         if [ -z "$context" ]; then continue; fi
-        find "$dir" -xdev -mindepth 1 ! -type l -print0 \
+        find "$dir" -xdev -mindepth 1 -print0 \
           | xargs -0 -r getfattr -h --absolute-names -n security.selinux 2>&1 \
           | awk '
               /^# file: / { file = substr($0, 9) }

@@ -82,6 +82,7 @@ in
             # /var/empty is immutable, which forbids a new label too.
             "chattr -i /var/empty",
             "mkdir -p /srv/data /tmp/.leftover-unix",
+            "ln -s /nonexistent /tmp/.leftover-unix/link",
             "chcon -R -h -t unlabeled_t /etc /var /root /home /srv /tmp/.leftover-unix",
             "chattr +i /var/empty",
             "rm -f /var/lib/selinux-nixos/relabelled",
