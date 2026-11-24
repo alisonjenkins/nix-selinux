@@ -235,7 +235,7 @@ if [ -n "$relabel_mutable" ]; then
           | awk -F'\t' '$2 != "<<none>>" { print $2 "\t" $1 }' > "$stamp.contexts" || true
         cut -f1 "$stamp.contexts" | sort -u | while IFS= read -r context; do
           awk -F'\t' -v context="$context" '$1 == context { print $2 }' "$stamp.contexts" \
-            | xargs -d '\n' -r setfilecon "$context" || true
+            | xargs -d '\n' -r setfattr -h -n security.selinux -v "$context" 2>/dev/null || true
         done
       }
 
@@ -258,20 +258,13 @@ if [ -n "$relabel_mutable" ]; then
         log "relabelling ${full[*]}"
         setfiles -F "${exclude[@]}" "$spec" "${full[@]}" || failed=1
         # Setting a label counts as a change, so the note must say when
-        # the pass ended. What was created while it ran may have been
-        # missed and is done now. If the filesystem cannot tell when a
-        # file was created, the note says when the pass started, and the
-        # next pass does more than it needs to.
-        created=1
-        for path in "${full[@]}"; do
-          find "$path" -maxdepth 0 -newerBm "$stamp.start" > /dev/null 2>&1 || created=
-        done
-        if [ -n "$created" ]; then
-          label_selected -newerBm "$stamp.start" "${full[@]}"
-          touch "$stamp.new"
-        else
-          touch -r "$stamp.start" "$stamp.new"
-        fi
+        # the pass ended. Files written while it ran may have been
+        # missed, and are done now; those are few, because setting a
+        # label does not touch a file's modification time. (A file put
+        # in place in those seconds with an old modification time is
+        # not seen. On a kernel with SELinux it has a label anyway.)
+        label_selected -newermm "$stamp.start" "${full[@]}"
+        touch "$stamp.new"
       else
         touch -r "$stamp.start" "$stamp.new"
       fi
@@ -290,6 +283,8 @@ if [ -n "$relabel_mutable" ]; then
         if [ -n "$keep" ]; then rm -f "$stamp.new"; else mv "$stamp.new" "$stamp"; fi
       fi
       if [ -n "$locked" ]; then chattr +i /var/empty; fi
+      # (setfattr, not setfilecon: it carries on past a file it cannot
+      # label, such as the mount point of a filesystem without labels.)
       # The rules leave the content of temporary directories alone.
       # Leftovers from before SELinux have no label at all there; give
       # them their directory's.
@@ -307,7 +302,7 @@ if [ -n "$relabel_mutable" ]; then
                 print
               }
             ' \
-          | xargs -d '\n' -r setfilecon "$context" || true
+          | xargs -d '\n' -r setfattr -h -n security.selinux -v "$context" 2>/dev/null || true
       done
     fi
     if [ -n "$record" ]; then
