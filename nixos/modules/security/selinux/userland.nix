@@ -118,14 +118,18 @@ in
 
       pam = lib.mkIf cfg.loginContexts {
         package = lib.mkDefault selinuxPam;
-        services.login.rules.session.selinux = {
-          # After every other session module: it sets the context of the
-          # next program the login process executes, which must be the
-          # user's shell.
-          order = 100000;
-          control = "required";
-          modulePath = "${config.security.pam.package}/lib/security/pam_selinux.so";
-        };
+        # After every other session module: it sets the context of the
+        # next program the process executes, which must be the user's
+        # shell, or the user's service manager. Without it that manager
+        # and everything it starts, the user's message bus included, would
+        # stay in the system's domains.
+        services = lib.genAttrs [ "login" "systemd-user" ] (_: {
+          rules.session.selinux = {
+            order = 100000;
+            control = "required";
+            modulePath = "${config.security.pam.package}/lib/security/pam_selinux.so";
+          };
+        });
       };
     };
   };
