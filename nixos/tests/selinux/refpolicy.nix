@@ -182,7 +182,7 @@
                 " /run/current-system/bin/switch-to-configuration test' >&2"
             )
         link = machine.succeed("stat -c %C /run/current-system").strip()
-        assert link == "system_u:object_r:nix_store_t:s0", link
+        assert link == "system_u:object_r:var_run_t:s0", link
         shadow = machine.succeed("stat -c %C /etc/shadow").strip()
         assert shadow == "system_u:object_r:shadow_t:s0", shadow
         machine.succeed(

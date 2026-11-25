@@ -139,6 +139,11 @@ for link in /run/current-system /run/booted-system; do
   if [ -L "$link" ]; then setfiles -F "$spec" "$link" 2>/dev/null || true; fi
 done
 
+# /etc, every time. It is small, and activation rewrites files in it
+# that must not keep the type of their directory: the password file above
+# all.
+if [ -d /etc ]; then setfiles -F "$spec" /etc 2>/dev/null || true; fi
+
 # A full pass over the mutable paths, when asked to and only if the
 # labelling rules changed since the last one.
 #
