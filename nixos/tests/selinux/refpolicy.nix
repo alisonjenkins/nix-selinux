@@ -152,6 +152,19 @@
             " -o NumberOfPasswordPrompts=1 alice@localhost true"
         )
 
+    with subtest("a user's service manager and message bus run in the user's domain"):
+        machine.succeed("loginctl enable-linger alice")
+        machine.wait_for_unit("user@1000.service")
+        manager = machine.succeed("ps -o label= -p $(systemctl show -P MainPID user@1000.service)").strip()
+        assert manager == "unconfined_u:unconfined_r:unconfined_t:s0-s0:c0.c1023", manager
+        # What activating a new generation does for every logged-in user.
+        machine.succeed(
+            "sudo -u alice XDG_RUNTIME_DIR=/run/user/1000 systemctl --user daemon-reexec",
+            "sudo -u alice XDG_RUNTIME_DIR=/run/user/1000 busctl --user list >&2",
+            "sudo -u alice XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-system-running >&2",
+        )
+        print(machine.succeed("ps -eo label,user,args | grep -E 'dbus-broker|systemd --user' | grep -v grep"))
+
     with subtest("the SSH session was registered with logind"):
         failures = machine.succeed("journalctl -b --no-pager | grep 'pam_systemd.*Failed' || true").strip()
         if strict:
