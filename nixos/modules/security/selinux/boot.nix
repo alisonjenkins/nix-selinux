@@ -253,9 +253,10 @@ in
         [ "$action" != boot ] || exit 0
         [ -r /sys/fs/selinux/policyvers ] || exit 0
         policy=${policyFile}
-        od=${lib.getExe' pkgs.coreutils "od"}
-        magic=$("$od" -An -tx4 -N4 "$policy" | tr -d ' ')
-        version=$("$od" -An -tu4 -j16 -N4 "$policy" | tr -d ' ')
+        # Started as a system service, this has no PATH to speak of.
+        PATH=${lib.makeBinPath [ pkgs.coreutils ]}:$PATH
+        magic=$(od -An -tx4 -N4 "$policy" | tr -d ' ')
+        version=$(od -An -tu4 -j16 -N4 "$policy" | tr -d ' ')
         supported=$(cat /sys/fs/selinux/policyvers)
         if [ "$magic" != f97cff8c ]; then
           echo "security.selinux: $policy is not a kernel policy" >&2

@@ -232,6 +232,8 @@ optional_policy(`
 	allow initrc_t unconfined_t:system { status start stop reload };
 	allow initrc_t unconfined_t:dbus send_msg;
 	allow unconfined_t initrc_t:dbus send_msg;
+	# systemd-run hands the unit the pipes of its caller over the system bus.
+	allow system_dbusd_t { initrc_t unconfined_t }:fifo_file { getattr read write };
 	# And the helper that removes /run/user/<uid> removes the links the
 	# manager left there.
 	allow systemd_user_runtime_dir_t user_tmp_t:lnk_file delete_lnk_file_perms;
