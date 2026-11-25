@@ -398,6 +398,17 @@ in
             type = "chkpwd_exec_t";
           };
         })
+        # Activating a generation creates /run/current-system, the account
+        # files and more. Started as a system service (nixos-rebuild does
+        # that) it would run in the generic service domain, whose new
+        # files take types that sshd and others may not read. It runs
+        # unconfined instead, as it does when an administrator starts it.
+        (lib.mkIf (refpolicy && config.system.switch.enable) {
+          switch-to-configuration = {
+            path = lib.getExe pkgs.switch-to-configuration-ng;
+            type = "unconfined_exec_t";
+          };
+        })
         (lib.mkIf (cfg.confine.nscd && config.services.nscd.enable) {
           nscd = {
             path =
