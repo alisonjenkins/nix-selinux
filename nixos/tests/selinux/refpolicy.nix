@@ -173,24 +173,6 @@
             " alice@localhost 'systemctl --user daemon-reexec && busctl --user list' >&2"
         )
 
-    with subtest("activating a generation from a system service keeps logins working"):
-        # nixos-rebuild runs the activation in a transient unit.
-        for _ in range(2):
-            machine.succeed(
-                "ssh -n -o StrictHostKeyChecking=no -o BatchMode=yes root@localhost"
-                " 'systemd-run --wait --collect --pipe --service-type=exec"
-                " /run/current-system/bin/switch-to-configuration test' >&2"
-            )
-        link = machine.succeed("stat -c %C /run/current-system").strip()
-        assert link == "system_u:object_r:var_run_t:s0", link
-        shadow = machine.succeed("stat -c %C /etc/shadow").strip()
-        assert shadow == "system_u:object_r:shadow_t:s0", shadow
-        machine.succeed(
-            "sshpass -p foobar ssh -n -o StrictHostKeyChecking=no"
-            " -o PreferredAuthentications=password -o PubkeyAuthentication=no"
-            " alice@localhost true"
-        )
-
     with subtest("the SSH session was registered with logind"):
         failures = machine.succeed("journalctl -b --no-pager | grep 'pam_systemd.*Failed' || true").strip()
         if strict:
@@ -283,6 +265,26 @@
         ]:
             rules = machine.succeed(f"sesearch -A -s nix_build_t {query} | grep -v ':False$' || true")
             assert "allow" not in rules, rules
+
+    with subtest("activating a generation from a system service keeps logins working"):
+        # nixos-rebuild runs the activation in a transient unit.
+        # Its output goes wherever the caller's does: a pipe, a terminal,
+        # a file.
+        for ssh, sink in [("-n", ""), ("-tt", ""), ("-n", " > /tmp/switch.log 2>&1")]:
+            machine.succeed(
+                f"ssh {ssh} -o StrictHostKeyChecking=no -o BatchMode=yes root@localhost"
+                " 'systemd-run --wait --collect --pipe --service-type=exec"
+                f" /run/current-system/bin/switch-to-configuration test{sink}' >&2"
+            )
+        link = machine.succeed("stat -c %C /run/current-system").strip()
+        assert link == "system_u:object_r:var_run_t:s0", link
+        shadow = machine.succeed("stat -c %C /etc/shadow").strip()
+        assert shadow == "system_u:object_r:shadow_t:s0", shadow
+        machine.succeed(
+            "sshpass -p foobar ssh -n -o StrictHostKeyChecking=no"
+            " -o PreferredAuthentications=password -o PubkeyAuthentication=no"
+            " alice@localhost true"
+        )
 
     with subtest("udev notes a new LVM physical volume"):
         machine.wait_for_unit("systemd-timesyncd.service")

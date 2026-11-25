@@ -225,14 +225,19 @@ allow systemd_tmpfiles_t user_runtime_t:dir search_dir_perms;
 # start over and to run the user's activation.
 optional_policy(`
 	gen_require(`
+		type tmp_t;
 		type unconfined_t;
+		type user_home_t;
 		type user_tmp_t;
 	')
 	allow initrc_t unconfined_t:system { status start stop reload };
 	allow initrc_t unconfined_t:dbus send_msg;
 	allow unconfined_t initrc_t:dbus send_msg;
-	# systemd-run hands the unit the pipes of its caller over the system bus.
+	# systemd-run hands the unit the output of its caller over the system
+	# bus: a pipe, a terminal, or a file that is already open.
 	allow system_dbusd_t { initrc_t unconfined_t }:fifo_file { getattr read write };
+	term_use_all_terms(system_dbusd_t)
+	allow system_dbusd_t { user_tmp_t user_home_t tmp_t var_log_t }:file { getattr read write append ioctl };
 	# And the helper that removes /run/user/<uid> removes the links the
 	# manager left there.
 	allow systemd_user_runtime_dir_t user_tmp_t:lnk_file delete_lnk_file_perms;
