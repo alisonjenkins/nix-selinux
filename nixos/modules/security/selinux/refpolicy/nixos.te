@@ -221,6 +221,22 @@ optional_policy(`
 
 allow systemd_tmpfiles_t user_runtime_t:dir search_dir_perms;
 
+# A user's service manager runs in the user's domain. Activating a new
+# generation, which runs as a system service, tells every such manager to
+# start over and to run the user's activation.
+optional_policy(`
+	gen_require(`
+		type unconfined_t;
+		type user_tmp_t;
+	')
+	allow initrc_t unconfined_t:system { status start stop reload };
+	allow initrc_t unconfined_t:dbus send_msg;
+	allow unconfined_t initrc_t:dbus send_msg;
+	# And the helper that removes /run/user/<uid> removes the links the
+	# manager left there.
+	allow systemd_user_runtime_dir_t user_tmp_t:lnk_file delete_lnk_file_perms;
+')
+
 # NixOS declares the layout of /nix/var, root's channel list and the
 # /run/keys ramfs as tmpfiles rules.
 allow systemd_tmpfiles_t nix_var_t:dir manage_dir_perms;
