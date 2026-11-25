@@ -75,8 +75,18 @@ domain_role_change_exemption(initrc_t)
 # Seen at boot: PCRE just-in-time compilation in grep, and agetty.
 allow initrc_t self:process execmem;
 allow initrc_t self:capability2 checkpoint_restore;
-# Performance events, which eBPF programs such as Cilium's report through.
+# Two kernel interfaces the policy's notion of unconfined leaves out:
+# performance events, which eBPF programs such as Cilium's report
+# through, and io_uring, which programs in containers use.
 allow initrc_t self:perf_event { open cpu kernel tracepoint read write };
+allow initrc_t self:io_uring { override_creds sqpoll cmd };
+optional_policy(`
+	gen_require(`
+		type unconfined_t;
+	')
+	allow unconfined_t self:perf_event { open cpu kernel tracepoint read write };
+	allow unconfined_t self:io_uring { override_creds sqpoll cmd };
+')
 
 # The reference policy lets sshd start sessions only in its own user
 # domains. Logins here are mapped to the unconfined user.
