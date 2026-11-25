@@ -39,8 +39,7 @@ allow domain domain:process2 nosuid_transition;
 
 # /run/current-system and /run/booted-system point into the store and
 # are followed by every program that looks for a tool or a setting. They
-# are replaced on every switch, and a fresh one carries the generic
-# runtime type until the next boot labels it.
+# are replaced on every switch and carry the generic runtime type.
 allow domain var_run_t:lnk_file read_lnk_file_perms;
 
 # Files under /etc are symbolic links into the store. The link at
