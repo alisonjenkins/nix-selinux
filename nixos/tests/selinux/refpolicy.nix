@@ -164,6 +164,12 @@
             "sudo -u alice XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-system-running >&2",
         )
         print(machine.succeed("ps -eo label,user,args | grep -E 'dbus-broker|systemd --user' | grep -v grep"))
+        # The same from the user's own login, as a deployment tool does.
+        machine.succeed(
+            "sshpass -p foobar ssh -n -o StrictHostKeyChecking=no"
+            " -o PreferredAuthentications=password -o PubkeyAuthentication=no"
+            " alice@localhost 'systemctl --user daemon-reexec && busctl --user list' >&2"
+        )
 
     with subtest("the SSH session was registered with logind"):
         failures = machine.succeed("journalctl -b --no-pager | grep 'pam_systemd.*Failed' || true").strip()
@@ -292,7 +298,7 @@
             "sesearch -A -s demo_t -t init_t -c dbus -p send_msg | grep -v ':False$' || true"
         )
         assert "allow" not in bus, bus
-        machine.succeed("ldd $(readlink -f /proc/$(pgrep -x dbus-broker)/exe) | grep libselinux")
+        machine.succeed("ldd $(readlink -f /proc/$(pgrep -x -o dbus-broker)/exe) | grep libselinux")
         if strict:
             assert "context=system_u:system_r:demo_t:s0" in output, output
             assert "hostname=readable" in output, output
