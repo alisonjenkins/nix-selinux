@@ -486,3 +486,12 @@ manage_files_pattern({ local_login_t sshd_t }, lastlog_t, lastlog_t)
 allow local_login_t init_runtime_t:sock_file write_sock_file_perms;
 allow local_login_t systemd_logind_t:unix_stream_socket connectto;
 fs_getattr_xattr_fs(local_login_t)
+
+# bootctl clears the immutable flag on files in efivarfs before it
+# changes an EFI variable, for example with set-default or set-oneshot.
+optional_policy(`
+	gen_require(`
+		type bootloader_t;
+	')
+	allow bootloader_t self:capability linux_immutable;
+')
