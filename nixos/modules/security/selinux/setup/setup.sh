@@ -427,8 +427,8 @@ if [ "$count" -gt 0 ]; then
   # within a store path or, with store optimisation, across them. Where
   # the generic rules disagree about such a file, setfiles picks one and
   # warns. Any of those types will do, and exact rules are applied below.
-  setfiles -F -f "$work/todo" "$spec" \
-    2> >(grep -v 'conflicting specifications' >&2 || true)
+  { setfiles -F -f "$work/todo" "$spec" 2>&1 >&3 \
+    | { grep -v 'conflicting specifications' || true; } >&2; } 3>&1
 fi
 if [ -s "$work/exact-files" ]; then
   if [ -n "$drift" ]; then log "restoring $drift exact labels"; fi
