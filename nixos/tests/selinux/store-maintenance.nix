@@ -119,6 +119,24 @@
         assert label(systemd) == "system_u:object_r:init_exec_t:s0", label(systemd)
         assert machine.succeed("nix-store --verify --check-contents 2>&1 | grep -ci 'modified\\|error' || true").strip() == "0"
 
+    with subtest("one file under two generic rules is labelled without a warning"):
+        machine.succeed(
+            "mkdir -p /tmp/twice/lib /tmp/twice/share",
+            "echo same-content-twice > /tmp/twice/lib/data",
+            "cp /tmp/twice/lib/data /tmp/twice/share/data",
+        )
+        twice = machine.succeed("nix-store --add /tmp/twice").strip()
+        machine.succeed("nix-store --optimise >&2")
+        assert inode(f"{twice}/lib/data") == inode(f"{twice}/share/data")
+        machine.succeed("systemctl start selinux-store-labels.service")
+        machine.wait_until_succeeds("! systemctl is-active -q selinux-store-labels.service")
+        assert label(f"{twice}/lib/data") in (
+            "system_u:object_r:lib_t:s0",
+            "system_u:object_r:usr_t:s0",
+        ), label(f"{twice}/lib/data")
+        machine.fail("journalctl -b | grep -q 'conflicting specifications'")
+        healthy()
+
     with subtest("linking files as they are added keeps labels right"):
         auto.start(allow_reboot=True)
         auto.wait_for_unit("multi-user.target")
