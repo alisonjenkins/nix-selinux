@@ -423,7 +423,12 @@ fi
 start=$(date +%s)
 if [ "$count" -gt 0 ]; then
   log "labelling $count store paths"
-  setfiles -F -f "$work/todo" "$spec"
+  # Identical files in the store can be one inode under several paths,
+  # within a store path or, with store optimisation, across them. Where
+  # the generic rules disagree about such a file, setfiles picks one and
+  # warns. Any of those types will do, and exact rules are applied below.
+  setfiles -F -f "$work/todo" "$spec" \
+    2> >(grep -v 'conflicting specifications' >&2 || true)
 fi
 if [ -s "$work/exact-files" ]; then
   if [ -n "$drift" ]; then log "restoring $drift exact labels"; fi
